@@ -4,13 +4,13 @@
   "description": "Sera Scout - Standalone client and tools for Sera Protocol subgraph",
   "main": "src/test.ts",
   "type": "module",
-  "scripts": {
-    "start": "tsx src/test.ts",
-    "alpha": "tsx src/test-alpha.ts",
-    "scheduler": "tsx src/test-scheduler.ts",
-    "liquidity": "tsx src/test-liquidity.ts",
-    "bot": "tsx --env-file=.env src/bot.ts"
-  },
+"scripts": {
+  "start": "tsx src/bot.ts",
+  "bot": "tsx src/bot.ts",
+  "alpha": "tsx src/test-alpha.ts",
+  "scheduler": "tsx src/test-scheduler.ts",
+  "liquidity": "tsx src/test-liquidity.ts"
+},
   "devDependencies": {
     "@types/node": "^20.0.0",
     "tsx": "^4.0.0",
