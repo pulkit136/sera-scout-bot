@@ -9,7 +9,7 @@
     "alpha": "tsx src/test-alpha.ts",
     "scheduler": "tsx src/test-scheduler.ts",
     "liquidity": "tsx src/test-liquidity.ts",
-    "bot": "tsx src/bot.ts"
+    "bot": "tsx --env-file=.env src/bot.ts"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
