@@ -141,7 +141,7 @@ Here is what the bot interactions look like in Telegram:
 
 | `/start` Menu | `/alpha` Board | `/scan` Results |
 | :---: | :---: | :---: |
-| ![Start Menu Placeholder](https://placehold.co/300x500/1e293b/ffffff?text=👋+Welcome+Menu) | ![Alpha Board Placeholder](https://placehold.co/300x500/1e293b/ffffff?text=🔥+Alpha+Board) | ![Market Scan Placeholder](https://placehold.co/300x500/1e293b/ffffff?text=🔎+Market+Scan) |
+| ![Start Menu Placeholder](https://placehold.co/300x500/1e293b/ffffff?text=Welcome+Menu) | ![Alpha Board Placeholder](https://placehold.co/300x500/1e293b/ffffff?text=Alpha+Board) | ![Market Scan Placeholder](https://placehold.co/300x500/1e293b/ffffff?text=Market+Scan) |
 
 ---
 
