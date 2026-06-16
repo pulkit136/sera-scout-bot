@@ -1,4 +1,4 @@
-# Sera Scout 🤖📈
+# Sera Scout 
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Grammy](https://img.shields.io/badge/GrammyJS-F87171?style=for-the-badge&logo=telegram&logoColor=white)](https://grammy.dev/)
@@ -9,7 +9,7 @@ Sera Scout is a high-performance market intelligence tool and Telegram Bot built
 
 ---
 
-## 🏗️ Architecture Flow
+## Architecture Flow
 
 Sera Scout uses a decoupled architecture to prevent rate limits and ensure sub-millisecond bot response times:
 
@@ -32,7 +32,7 @@ graph TD
 
 ---
 
-## 🌟 Key Features
+## Key Features
 
 *   **Alpha Board (Spread Rankings)**: Evaluates all protocol trading markets and ranks them by the tightest bid-ask spread percentages. Supported by a background TTL-based state scheduler.
 *   **Liquidity Leaderboard**: Aggregates and normalizes market depths across the top 5 bids and asks levels to calculate total liquidity volumes in base tokens.
@@ -40,7 +40,7 @@ graph TD
 
 ---
 
-## 🕹️ Bot Command Reference
+## Bot Command Reference
 
 *   `/start` — Greeting portal and command summary menu.
 *   `/about` — Details bot features and architecture.
@@ -50,7 +50,7 @@ graph TD
 
 ---
 
-## 🚀 Setup & Local Execution
+## Setup & Local Execution
 
 ### Prerequisites
 
@@ -95,7 +95,7 @@ BOT_TOKEN=your_telegram_bot_token_here
 
 ---
 
-## 🚢 Production Deployment
+## Production Deployment
 
 For continuous, production-grade hosting, use a process manager like **PM2** or **Docker**.
 
@@ -135,7 +135,7 @@ PM2 keeps the bot process alive and handles automatic restarts:
 
 ---
 
-## 📸 Screenshots & Previews
+## Screenshots & Previews
 
 Here is what the bot interactions look like in Telegram:
 
@@ -145,7 +145,7 @@ Here is what the bot interactions look like in Telegram:
 
 ---
 
-## 🗺️ Product Roadmap
+## Product Roadmap
 
 - [ ] **Real-Time Price Alerts**: Allow users to set price trigger alerts for specific trading pairs.
 - [ ] **Arbitrage Scan Engine**: Cross-reference spreads with external AMM pools (e.g. Uniswap V3) to detect flash-swap arbitrage opportunities.
