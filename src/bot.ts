@@ -188,20 +188,40 @@ bot.command("quote", async (ctx) => {
       gas_mode: "receive_less"
     });
 
-    const recAmt = formatUnits(quote.route_params.minOutputAmount, toToken.decimals);
-    
-    // Calculate exchange rate safely using decimal arithmetic (Number conversion is fine for final display UI rate)
-    const numericFrom = Number(amountStr);
-    const numericTo = Number(recAmt);
-    const rate = numericTo / numericFrom;
+    const minReceive = quote.route_params.minOutputAmount;
+    const receiveAmount = formatUnits(minReceive, toToken.decimals);
 
     let text = `💸 *Sera Swap Quote*\n\n`;
-    text += `• *Sell:* ${amountStr} ${fromToken.symbol}\n`;
-    text += `• *Receive (Min):* ${recAmt} ${toToken.symbol}\n`;
-    text += `• *Rate:* 1 ${fromToken.symbol} = ${rate.toFixed(6)} ${toToken.symbol}\n`;
-    if (quote.fee_breakdown) {
-      text += `• *Gas Cost:* $${quote.fee_breakdown.gas_cost_usd} USD\n`;
+    text += `• Input: ${amountStr} ${fromToken.symbol}\n`;
+
+    if (quote.fee_breakdown && quote.fee_breakdown.gas_cost_from_token) {
+      try {
+        const gasCostRaw = parseUnits(quote.fee_breakdown.gas_cost_from_token, fromToken.decimals);
+        const netInputRaw = BigInt(atomicAmount) - BigInt(gasCostRaw);
+
+        if (netInputRaw > 0n) {
+          const gasCost = quote.fee_breakdown.gas_cost_from_token;
+          const gasCostUsd = quote.fee_breakdown.gas_cost_usd;
+          const netInput = formatUnits(netInputRaw.toString(), fromToken.decimals);
+          const numericMinReceive = Number(receiveAmount);
+          const numericNetInput = Number(netInput);
+          const effectiveRate = numericMinReceive / numericNetInput;
+
+          text += `• Estimated Gas: ${gasCost} ${fromToken.symbol} ($${gasCostUsd})\n`;
+          text += `• Amount Swapped: ${netInput} ${fromToken.symbol}\n`;
+          text += `• Minimum Receive: ${receiveAmount} ${toToken.symbol}\n`;
+          text += `• Effective Market Rate: ~${effectiveRate.toFixed(5)} ${toToken.symbol} per ${fromToken.symbol}\n\n`;
+        } else {
+          text += `• Minimum Receive: ${receiveAmount} ${toToken.symbol}\n\n`;
+        }
+      } catch (e) {
+        text += `• Minimum Receive: ${receiveAmount} ${toToken.symbol}\n\n`;
+      }
+    } else {
+      text += `• Minimum Receive: ${receiveAmount} ${toToken.symbol}\n\n`;
     }
+
+    text += `ℹ️ Minimum receive includes slippage protection.`;
 
     await ctx.reply(text, { parse_mode: "Markdown" });
   } catch (error) {

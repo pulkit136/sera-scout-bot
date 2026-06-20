@@ -4,7 +4,7 @@ import { parseUnits, formatUnits } from "./utils/decimal.js";
 async function main() {
   const fromSym = "USDC";
   const toSym = "USDT";
-  const amountStr = "10.5";
+  const amountStr = "100";
 
   console.log(`🤖 Starting quote test for ${amountStr} ${fromSym} -> ${toSym}...`);
 
@@ -43,21 +43,37 @@ async function main() {
     console.log(`   - Min Output Raw: ${quote.route_params.minOutputAmount}`);
 
     // 4. Safe format output amount
-    const recAmt = formatUnits(quote.route_params.minOutputAmount, toToken.decimals);
-    console.log(`✅ Safe amount formatting: "${quote.route_params.minOutputAmount}" -> "${recAmt}"`);
+    const receiveAmount = formatUnits(quote.route_params.minOutputAmount, toToken.decimals);
+    console.log(`✅ Safe amount formatting: "${quote.route_params.minOutputAmount}" -> "${receiveAmount}"`);
 
-    // 5. Calculate rate
-    const numericFrom = Number(amountStr);
-    const numericTo = Number(recAmt);
-    const rate = numericTo / numericFrom;
+    let text = `\n💸 Sera Swap Quote\n\n`;
+    text += `• Input: ${amountStr} ${fromToken.symbol}\n`;
 
-    console.log(`\n💸 Result Summary:`);
-    console.log(`   • Sell: ${amountStr} ${fromToken.symbol}`);
-    console.log(`   • Receive (Min): ${recAmt} ${toToken.symbol}`);
-    console.log(`   • Rate: 1 ${fromToken.symbol} = ${rate.toFixed(6)} ${toToken.symbol}`);
-    if (quote.fee_breakdown) {
-      console.log(`   • Gas Cost: $${quote.fee_breakdown.gas_cost_usd} USD`);
+    if (quote.fee_breakdown && quote.fee_breakdown.gas_cost_from_token) {
+      const gasCostRaw = parseUnits(quote.fee_breakdown.gas_cost_from_token, fromToken.decimals);
+      const netInputRaw = BigInt(atomicAmount) - BigInt(gasCostRaw);
+
+      if (netInputRaw > 0n) {
+        const gasCost = quote.fee_breakdown.gas_cost_from_token;
+        const gasCostUsd = quote.fee_breakdown.gas_cost_usd;
+        const netInput = formatUnits(netInputRaw.toString(), fromToken.decimals);
+        const numericMinReceive = Number(receiveAmount);
+        const numericNetInput = Number(netInput);
+        const effectiveRate = numericMinReceive / numericNetInput;
+
+        text += `• Estimated Gas: ${gasCost} ${fromToken.symbol} ($${gasCostUsd})\n`;
+        text += `• Amount Swapped: ${netInput} ${fromToken.symbol}\n`;
+        text += `• Minimum Receive: ${receiveAmount} ${toToken.symbol}\n`;
+        text += `• Effective Market Rate: ~${effectiveRate.toFixed(5)} ${toToken.symbol} per ${fromToken.symbol}\n\n`;
+      } else {
+        text += `• Minimum Receive: ${receiveAmount} ${toToken.symbol}\n\n`;
+      }
+    } else {
+      text += `• Minimum Receive: ${receiveAmount} ${toToken.symbol}\n\n`;
     }
+
+    text += `ℹ️ Minimum receive includes slippage protection.`;
+    console.log(text);
 
   } catch (error) {
     console.error("❌ Test failed:", error instanceof Error ? error.message : error);
