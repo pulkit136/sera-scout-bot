@@ -1,6 +1,8 @@
 import { Bot } from "grammy";
 import { startAlphaScheduler, getLatestAlphaBoard } from "./services/scheduler.js";
 import { getTopLiquidityMarkets, getMarketScan } from "./services/scout.js";
+import { getTokens, getQuote } from "./services/sera-api.js";
+import { parseUnits, formatUnits } from "./utils/decimal.js";
 
 // Load Bot Token from environment variable
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -30,6 +32,7 @@ Market intelligence bot for Sera Protocol.
 /alpha - View tightest spread markets (cached)
 /liquidity - View top liquidity markets
 /scan <token> - Scan markets for a specific token
+/quote <from> <to> <amount> - Get a swap price quote
 /about - Learn more about Sera Scout`;
   await ctx.reply(text, { parse_mode: "Markdown" });
 });
@@ -136,6 +139,75 @@ bot.command("scan", async (ctx) => {
   } catch (error) {
     console.error("Bot /scan handler error:", error);
     await ctx.reply(ERROR_MESSAGE);
+  }
+});
+
+// /quote <from_symbol> <to_symbol> <amount> command
+bot.command("quote", async (ctx) => {
+  try {
+    const args = ctx.match?.trim().split(/\s+/);
+    if (!args || args.length !== 3) {
+      await ctx.reply("⚠️ Usage: `/quote <from_symbol> <to_symbol> <amount>`\nExample: `/quote USDC USDT 10`", { parse_mode: "Markdown" });
+      return;
+    }
+
+    const [fromSym, toSym, amountStr] = args;
+    await ctx.replyWithChatAction("typing");
+
+    // Fetch token configuration
+    const tokens = await getTokens();
+    const fromToken = tokens.find(t => t.symbol.toUpperCase() === fromSym.toUpperCase());
+    const toToken = tokens.find(t => t.symbol.toUpperCase() === toSym.toUpperCase());
+
+    if (!fromToken) {
+      await ctx.reply(`❌ Unsupported source token symbol: *${fromSym}*`, { parse_mode: "Markdown" });
+      return;
+    }
+    if (!toToken) {
+      await ctx.reply(`❌ Unsupported destination token symbol: *${toSym}*`, { parse_mode: "Markdown" });
+      return;
+    }
+
+    // Convert amount safely using decimal-safe conversion helper
+    let atomicAmount: string;
+    try {
+      atomicAmount = parseUnits(amountStr, fromToken.decimals);
+    } catch (e) {
+      await ctx.reply(`❌ Invalid amount *${amountStr}*. Please specify a valid number.`, { parse_mode: "Markdown" });
+      return;
+    }
+
+    // Fetch Quote from Mainnet REST API
+    const quote = await getQuote({
+      from_token: fromToken.address,
+      to_token: toToken.address,
+      from_amount: atomicAmount,
+      owner_address: "0x0000000000000000000000000000000000000000", // Query-only placeholder
+      recipient: "0x0000000000000000000000000000000000000000",
+      expiration: Math.floor(Date.now() / 1000) + 120,
+      gas_mode: "receive_less"
+    });
+
+    const recAmt = formatUnits(quote.route_params.minOutputAmount, toToken.decimals);
+    
+    // Calculate exchange rate safely using decimal arithmetic (Number conversion is fine for final display UI rate)
+    const numericFrom = Number(amountStr);
+    const numericTo = Number(recAmt);
+    const rate = numericTo / numericFrom;
+
+    let text = `💸 *Sera Swap Quote*\n\n`;
+    text += `• *Sell:* ${amountStr} ${fromToken.symbol}\n`;
+    text += `• *Receive (Min):* ${recAmt} ${toToken.symbol}\n`;
+    text += `• *Rate:* 1 ${fromToken.symbol} = ${rate.toFixed(6)} ${toToken.symbol}\n`;
+    if (quote.fee_breakdown) {
+      text += `• *Gas Cost:* $${quote.fee_breakdown.gas_cost_usd} USD\n`;
+    }
+
+    await ctx.reply(text, { parse_mode: "Markdown" });
+  } catch (error) {
+    console.error("Bot /quote error:", error);
+    const msg = error instanceof Error ? error.message : "Unknown error";
+    await ctx.reply(`❌ Failed to generate quote: *${msg}*`, { parse_mode: "Markdown" });
   }
 });
 
