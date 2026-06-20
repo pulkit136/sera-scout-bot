@@ -182,6 +182,26 @@ export function clearCache(): void {
 // ==========================================
 
 /**
+ * Normalizes market data by correcting the token symbol from MYRC to MYRT if present.
+ */
+function normalizeMarket(market: MarketInfo): MarketInfo {
+  if (!market) return market;
+  const baseSymbol = market.baseToken.symbol;
+  const quoteSymbol = market.quoteToken.symbol;
+  return {
+    ...market,
+    baseToken: {
+      ...market.baseToken,
+      symbol: baseSymbol.toUpperCase() === "MYRC" ? "MYRT" : baseSymbol,
+    },
+    quoteToken: {
+      ...market.quoteToken,
+      symbol: quoteSymbol.toUpperCase() === "MYRC" ? "MYRT" : quoteSymbol,
+    },
+  };
+}
+
+/**
  * Lists available trading markets in the protocol (bypassing cache).
  */
 export async function listMarkets(limit: number = 10): Promise<MarketInfo[]> {
@@ -189,7 +209,7 @@ export async function listMarkets(limit: number = 10): Promise<MarketInfo[]> {
     LIST_MARKETS_QUERY,
     { first: limit }
   );
-  return data.markets;
+  return data.markets.map(normalizeMarket);
 }
 
 /**
@@ -205,7 +225,7 @@ export async function getMarket(marketId: string): Promise<MarketInfo> {
     throw new Error(`Market not found for address: ${marketId}`);
   }
 
-  return data.market;
+  return normalizeMarket(data.market);
 }
 
 /**

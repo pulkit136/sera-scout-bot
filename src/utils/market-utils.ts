@@ -52,7 +52,7 @@ export function calculateSpread(orderBook: OrderBook): {
 }
 
 /**
- * Returns the market pair string format (e.g., "MYRC/AUDD").
+ * Returns the market pair string format (e.g., "MYRT/AUDD").
  */
 export function formatMarketPair(market: MarketInfo): string {
   return `${market.baseToken.symbol}/${market.quoteToken.symbol}`;

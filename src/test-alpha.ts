@@ -32,11 +32,11 @@ async function main() {
     const board3 = await refreshAlphaBoard(10);
     console.log(`Retrieved ${board3.length} fresh markets from Alpha Board after bypass.`);
 
-    // Brief demo of getMarketScan for "MYRC"
+    // Brief demo of getMarketScan for "MYRT"
     console.log("\n----------------------------------------");
-    console.log("🔍 Market Scan Demo: MYRC (Should use cache)");
+    console.log("🔍 Market Scan Demo: MYRT (Should use cache)");
     console.log("----------------------------------------");
-    const scanResults = await getMarketScan("MYRC");
+    const scanResults = await getMarketScan("MYRT");
     for (const r of scanResults) {
       console.log(`Market: ${r.marketName}`);
       console.log(`- Latest Price: ${r.latestPrice.toFixed(6)}`);

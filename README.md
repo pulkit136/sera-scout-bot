@@ -46,7 +46,7 @@ graph TD
 *   `/about` — Details bot features and architecture.
 *   `/alpha` — Retrieves top 10 tightest spread pairs (instantaneous cache retrieval).
 *   `/liquidity` — Ranks top 10 pairs by total liquidity volumes (top 5 bid/ask levels).
-*   `/scan <TOKEN>` — Displays spot price, spread, and makers/takers fee details for any token (e.g. `/scan MYRC`).
+*   `/scan <TOKEN>` — Displays spot price, spread, and makers/takers fee details for any token (e.g. `/scan MYRT`).
 
 ---
 

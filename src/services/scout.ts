@@ -97,7 +97,7 @@ export async function refreshAlphaBoard(limit: number = 10): Promise<AlphaBoardE
 }
 
 /**
- * Scans all markets to find matches for a given token symbol (e.g. "MYRC" or "AUDD").
+ * Scans all markets to find matches for a given token symbol (e.g. "MYRT" or "AUDD").
  * Utilizes cached metadata and depths by default.
  */
 export async function getMarketScan(

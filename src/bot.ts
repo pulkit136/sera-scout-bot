@@ -111,7 +111,7 @@ bot.command("scan", async (ctx) => {
   try {
     const tokenArg = ctx.match?.trim().toUpperCase();
     if (!tokenArg) {
-      await ctx.reply("Please specify a token symbol. Example: `/scan MYRC`", { parse_mode: "Markdown" });
+      await ctx.reply("Please specify a token symbol. Example: `/scan MYRT`", { parse_mode: "Markdown" });
       return;
     }
 
