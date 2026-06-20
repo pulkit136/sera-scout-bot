@@ -41,13 +41,13 @@ Market intelligence bot for Sera Protocol.
 bot.command("about", async (ctx) => {
   const text = `*Sera Scout*
 
-Telegram market intelligence bot powered by live Sera Protocol order book data.
+Telegram companion bot for the Sera Protocol, focused on market discovery, quote generation, and future trading tools.
 
 *Features:*
 
-• *Alpha Board*: Ranks markets by tightest spread.
-• *Liquidity Leaderboard*: Ranks markets by deep liquidity.
-• *Token Market Scan*: Looks up detailed info for any token symbol.`;
+• *Quote Generation*: Fetch real-time, slippage-protected swap quotes directly from Sera Mainnet.
+• *Market Discovery*: Explore active pools, tokens, and trading pairs (Planned).
+• *Price Alerts*: Get real-time notifications for market movements (Planned).`;
   await ctx.reply(text, { parse_mode: "Markdown" });
 });
 
