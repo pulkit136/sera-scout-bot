@@ -1,7 +1,7 @@
 {
   "name": "sera-scout-bot",
   "version": "1.0.0",
-  "description": "Sera Scout - Standalone client and tools for Sera Protocol subgraph",
+  "description": "Sera Scout - Telegram-native market intelligence and trading assistant for Sera Protocol",
   "main": "src/test.ts",
   "type": "module",
 "scripts": {
