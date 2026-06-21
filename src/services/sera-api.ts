@@ -99,12 +99,21 @@ export function getMarketsCacheTimestamp(): number | null {
   return marketsCache.timestamp;
 }
 
+let tokensCache: { data: ApiTokenInfo[]; timestamp: number } | null = null;
+const TOKENS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
 export async function getTokens(): Promise<ApiTokenInfo[]> {
+  const now = Date.now();
+  if (tokensCache && (now - tokensCache.timestamp < TOKENS_CACHE_TTL)) {
+    return tokensCache.data;
+  }
   const data = await requestSeraApi<{ tokens: ApiTokenInfo[] }>("/tokens");
-  return data.tokens.map(token => ({
+  const tokens = data.tokens.map(token => ({
     ...token,
     symbol: token.symbol.toUpperCase() === "MYRC" ? "MYRT" : token.symbol
   }));
+  tokensCache = { data: tokens, timestamp: now };
+  return tokens;
 }
 
 export async function getQuote(request: QuoteRequest): Promise<ApiQuoteResponse> {

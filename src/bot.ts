@@ -1,4 +1,4 @@
-import { Bot } from "grammy";
+import { Bot, InlineKeyboard } from "grammy";
 import { startAlphaScheduler, getLatestAlphaBoard } from "./services/scheduler.js";
 import { getTopLiquidityMarkets, getMarketScan } from "./services/scout.js";
 import { getTokens, getQuote, getCachedMarkets, getMarketsCacheTimestamp } from "./services/sera-api.js";
@@ -22,43 +22,404 @@ const bot = new Bot(BOT_TOKEN);
 const ERROR_MESSAGE = "⚠️ Data temporarily unavailable.\nPlease try again shortly.";
 
 // ==========================================
+// Session State Management
+// ==========================================
+
+interface UserSession {
+  state: "idle" | "awaiting_quote_pair" | "awaiting_quote_amount" | "awaiting_alert_rate";
+  pendingQuote?: { from: string; to: string };
+  pendingAlert?: { from: string; to: string; condition: "above" | "below" };
+}
+const userSessions = new Map<number, UserSession>();
+
+// ==========================================
+// Interactive Keyboard & Screen Generators
+// ==========================================
+
+function getMainMenu() {
+  const text = `👋 *Welcome to Sera Scout*\n\n` +
+    `Sera Scout is your interactive companion for the Sera Protocol.\n` +
+    `Use the menu below to navigate markets, request quotes, configure price alerts, and view statistics without remembering commands.`;
+  const keyboard = new InlineKeyboard()
+    .text("💸 Swap Quote", "menu_quote").row()
+    .text("📈 Browse Markets", "mkt:1").row()
+    .text("🔥 Trending", "trd:1")
+    .text("📊 Stats", "stats").row()
+    .text("🔔 My Alerts", "alerts:1");
+  return { text, keyboard };
+}
+
+function getQuoteMenu() {
+  const text = `💸 *Swap Quote*\n\n` +
+    `Choose one of the popular trading pairs below, or click *✏️ Custom Pair* to enter a different pair.`;
+  const keyboard = new InlineKeyboard()
+    .text("USDC / USDT", "q_flow:USDC:USDT")
+    .text("EURS / USDT", "q_flow:EURS:USDT").row()
+    .text("MXNT / USDC", "q_flow:MXNT:USDC")
+    .text("BRZ / USDT", "q_flow:BRZ:USDT").row()
+    .text("✏️ Custom Pair", "q_custom_start").row()
+    .text("🏠 Home", "home");
+  return { text, keyboard };
+}
+
+async function getMarketsPage(page: number, filter?: string) {
+  const allMarkets = await getCachedMarkets();
+  let sortedMarkets = [...allMarkets].sort((a, b) => a.symbol.localeCompare(b.symbol));
+
+  const filterStr = filter?.toUpperCase() || "";
+  if (filterStr) {
+    sortedMarkets = sortedMarkets.filter(m => 
+      m.symbol.toUpperCase().includes(filterStr) ||
+      m.base_symbol.toUpperCase().includes(filterStr) ||
+      m.quote_symbol.toUpperCase().includes(filterStr)
+    );
+  }
+
+  const pageSize = 8;
+  const totalMarkets = sortedMarkets.length;
+  const totalPages = Math.ceil(totalMarkets / pageSize) || 1;
+  const currentPage = Math.max(1, Math.min(page, totalPages));
+
+  const startIdx = (currentPage - 1) * pageSize;
+  const pageMarkets = sortedMarkets.slice(startIdx, startIdx + pageSize);
+
+  let text = `📈 *Sera Markets*\n\n`;
+  if (filterStr) {
+    text += `Filtered by: *${filterStr}*\n\n`;
+  }
+  
+  if (pageMarkets.length === 0) {
+    text += `No markets found.`;
+  } else {
+    text += `Select a market pair below to view details and execute actions:\n\n`;
+  }
+
+  const keyboard = new InlineKeyboard();
+  for (let i = 0; i < pageMarkets.length; i += 2) {
+    const m1 = pageMarkets[i];
+    const m2 = pageMarkets[i + 1];
+    
+    const filterParam = filterStr ? filterStr.substring(0, 10) : "";
+    if (m1 && m2) {
+      keyboard.text(`${m1.base_symbol}/${m1.quote_symbol}`, `mkt_det:${m1.base_symbol}:${m1.quote_symbol}:${currentPage}:${filterParam}`)
+              .text(`${m2.base_symbol}/${m2.quote_symbol}`, `mkt_det:${m2.base_symbol}:${m2.quote_symbol}:${currentPage}:${filterParam}`).row();
+    } else if (m1) {
+      keyboard.text(`${m1.base_symbol}/${m1.quote_symbol}`, `mkt_det:${m1.base_symbol}:${m1.quote_symbol}:${currentPage}:${filterParam}`).row();
+    }
+  }
+
+  if (currentPage > 1 || currentPage < totalPages) {
+    const filterParam = filterStr ? filterStr.substring(0, 10) : "";
+    if (currentPage > 1) {
+      keyboard.text("⬅ Prev", `mkt:${currentPage - 1}:${filterParam}`);
+    }
+    if (currentPage < totalPages) {
+      keyboard.text("➡ Next", `mkt:${currentPage + 1}:${filterParam}`);
+    }
+    keyboard.row();
+  }
+
+  keyboard.text("🏠 Home", "home");
+
+  text += `Page ${currentPage} of ${totalPages} (${totalMarkets} total markets)\n\n`;
+  text += `You can also search/filter using: \`/markets <query>\``;
+
+  return { text, keyboard };
+}
+
+async function getMarketDetails(base: string, quote: string, backPage: number, filter?: string) {
+  const allMarkets = await getCachedMarkets();
+  const market = allMarkets.find(m => 
+    m.base_symbol.toUpperCase() === base.toUpperCase() && 
+    m.quote_symbol.toUpperCase() === quote.toUpperCase()
+  );
+
+  let text = `📈 *Market Details: ${base} / ${quote}*\n\n`;
+  if (market) {
+    text += `• *Ticker Symbol:* ${market.symbol}\n`;
+    text += `• *Base Asset:* ${market.base_symbol} (\`${market.base_address.substring(0, 6)}...${market.base_address.substring(38)}\`)\n`;
+    text += `• *Quote Asset:* ${market.quote_symbol} (\`${market.quote_address.substring(0, 6)}...${market.quote_address.substring(38)}\`)\n`;
+    text += `• *Quantity Precision:* ${market.quantity_precision}\n`;
+    text += `• *Tick Precision:* ${market.tick_precision}\n`;
+    text += `• *Minimum Ask:* ${market.min_ask_amount} ${market.base_symbol}\n`;
+    text += `• *Minimum Bid:* ${market.min_bid_quote_amount} ${market.quote_symbol}\n`;
+  } else {
+    text += `• *Pair:* ${base} → ${quote}\n`;
+  }
+
+  const filterStr = filter || "";
+  const keyboard = new InlineKeyboard()
+    .text("💸 Get Quote", `q_flow:${base}:${quote}`)
+    .text("🔔 Set Alert", `al_flow:${base}:${quote}`).row()
+    .text("⬅ Back to List", `mkt:${backPage}:${filterStr.substring(0, 10)}`)
+    .text("🏠 Home", "home");
+
+  return { text, keyboard };
+}
+
+function getQuoteFlow(from: string, to: string) {
+  const text = `💸 *Sera Swap Quote: ${from} ➔ ${to}*\n\n` +
+    `Select a predefined swap amount below, or click *✏️ Custom Amount* to specify another value:`;
+  const keyboard = new InlineKeyboard()
+    .text("100", `q_amt:${from}:${to}:100`)
+    .text("1,000", `q_amt:${from}:${to}:1000`)
+    .text("10,000", `q_amt:${from}:${to}:10000`).row()
+    .text("✏️ Custom Amount", `q_custom:${from}:${to}`).row()
+    .text("🏠 Home", "home");
+  return { text, keyboard };
+}
+
+function getAlertFlow(from: string, to: string) {
+  const text = `🔔 *Create Alert for ${from} ➔ ${to}*\n\n` +
+    `Choose when you want to be notified:`;
+  const keyboard = new InlineKeyboard()
+    .text("📈 Rate Goes Above", `al_cond:${from}:${to}:above`)
+    .text("📉 Rate Goes Below", `al_cond:${from}:${to}:below`).row()
+    .text("🏠 Home", "home");
+  return { text, keyboard };
+}
+
+function getAlertsPage(chatId: number, page: number) {
+  const alerts = listAlertsForChat(chatId);
+  const pageSize = 5;
+  const totalAlerts = alerts.length;
+  const totalPages = Math.ceil(totalAlerts / pageSize) || 1;
+  const currentPage = Math.max(1, Math.min(page, totalPages));
+
+  const startIdx = (currentPage - 1) * pageSize;
+  const pageAlerts = alerts.slice(startIdx, startIdx + pageSize);
+
+  let text = `🔔 *Active Quote Alerts*\n\n`;
+  if (totalAlerts === 0) {
+    text += `You have no active quote alerts. Create one from any market's detail view!`;
+  } else {
+    text += `Your active price alerts:\n\n`;
+    for (let i = 0; i < pageAlerts.length; i++) {
+      const a = pageAlerts[i];
+      const condLabel = a.condition === "above" ? "Above" : "Below";
+      const idx = startIdx + i + 1;
+      text += `*${idx}.* ${a.from_token} ➔ ${a.to_token} when ${condLabel} *${a.target_rate.toFixed(4)}* (ID: ${a.id})\n`;
+    }
+  }
+
+  const keyboard = new InlineKeyboard();
+  if (pageAlerts.length > 0) {
+    for (let i = 0; i < pageAlerts.length; i++) {
+      const a = pageAlerts[i];
+      const idx = startIdx + i + 1;
+      keyboard.text(`❌ Remove ${idx}`, `rm_al:${a.id}:${currentPage}`);
+    }
+    keyboard.row();
+  }
+
+  if (currentPage > 1 || currentPage < totalPages) {
+    if (currentPage > 1) {
+      keyboard.text("⬅ Prev", `alerts:${currentPage - 1}`);
+    }
+    if (currentPage < totalPages) {
+      keyboard.text("➡ Next", `alerts:${currentPage + 1}`);
+    }
+    keyboard.row();
+  }
+
+  keyboard.text("🏠 Home", "home");
+
+  return { text, keyboard };
+}
+
+async function getTrendingPage(page: number) {
+  const markets = await getCachedMarkets();
+  const counts: Record<string, { symbol: string; count: number }> = {};
+  for (const m of markets) {
+    if (!counts[m.base_address.toLowerCase()]) {
+      counts[m.base_address.toLowerCase()] = { symbol: m.base_symbol, count: 0 };
+    }
+    counts[m.base_address.toLowerCase()].count++;
+
+    if (!counts[m.quote_address.toLowerCase()]) {
+      counts[m.quote_address.toLowerCase()] = { symbol: m.quote_symbol, count: 0 };
+    }
+    counts[m.quote_address.toLowerCase()].count++;
+  }
+
+  const sorted = Object.values(counts).sort((a, b) => b.count - a.count);
+
+  const pageSize = 5;
+  const totalTokens = sorted.length;
+  const totalPages = Math.ceil(totalTokens / pageSize) || 1;
+  const currentPage = Math.max(1, Math.min(page, totalPages));
+
+  const startIdx = (currentPage - 1) * pageSize;
+  const pageTokens = sorted.slice(startIdx, startIdx + pageSize);
+
+  let text = `🔥 *Trending Connected Tokens*\n\n` +
+    `These tokens appear in the most active Sera markets. Click on a token below to view all its matching markets:\n\n`;
+
+  const keyboard = new InlineKeyboard();
+  for (let i = 0; i < pageTokens.length; i++) {
+    const entry = pageTokens[i];
+    const idx = startIdx + i + 1;
+    text += `${idx}. *${entry.symbol}* (${entry.count} markets)\n`;
+    keyboard.text(entry.symbol, `mkt:1:${entry.symbol}`);
+  }
+  keyboard.row();
+
+  if (currentPage > 1 || currentPage < totalPages) {
+    if (currentPage > 1) {
+      keyboard.text("⬅ Prev", `trd:${currentPage - 1}`);
+    }
+    if (currentPage < totalPages) {
+      keyboard.text("➡ Next", `trd:${currentPage + 1}`);
+    }
+    keyboard.row();
+  }
+
+  keyboard.text("🏠 Home", "home");
+
+  return { text, keyboard };
+}
+
+async function getStatsView() {
+  const markets = await getCachedMarkets();
+  const tokens = await getTokens();
+
+  const totalMarkets = markets.length;
+  const totalTokens = tokens.length;
+
+  const lastRefreshTs = getMarketsCacheTimestamp();
+  const lastRefreshText = lastRefreshTs 
+    ? new Date(lastRefreshTs).toISOString().replace("T", " ").substring(0, 19) + " UTC"
+    : "Just now";
+
+  const quoteCounts: Record<string, number> = {};
+  for (const m of markets) {
+    quoteCounts[m.quote_symbol] = (quoteCounts[m.quote_symbol] || 0) + 1;
+  }
+  const usdtCount = quoteCounts["USDT"] || 0;
+  const usdcCount = quoteCounts["USDC"] || 0;
+  const eursCount = quoteCounts["EURS"] || 0;
+
+  let text = `📊 *Sera Market Stats*\n\n` +
+    `• Total Markets: ${totalMarkets}\n` +
+    `• Total Tokens: ${totalTokens}\n` +
+    `• Last Refresh: ${lastRefreshText}\n\n` +
+    `*Most Common Quote Tokens:*\n\n` +
+    `• USDT: ${usdtCount} markets\n` +
+    `• USDC: ${usdcCount} markets\n` +
+    `• EURS: ${eursCount} markets\n`;
+
+  const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+
+  return { text, keyboard };
+}
+
+async function fetchAndFormatQuote(fromSym: string, toSym: string, amountStr: string): Promise<string> {
+  const tokens = await getTokens();
+  const fromToken = tokens.find(t => t.symbol.toUpperCase() === fromSym.toUpperCase());
+  const toToken = tokens.find(t => t.symbol.toUpperCase() === toSym.toUpperCase());
+
+  if (!fromToken) {
+    throw new Error(`Unsupported source token symbol: *${fromSym}*`);
+  }
+  if (!toToken) {
+    throw new Error(`Unsupported destination token symbol: *${toSym}*`);
+  }
+
+  let atomicAmount: string;
+  try {
+    atomicAmount = parseUnits(amountStr, fromToken.decimals);
+  } catch (e) {
+    throw new Error(`Invalid amount *${amountStr}*. Please specify a valid number.`);
+  }
+
+  const quote = await getQuote({
+    from_token: fromToken.address,
+    to_token: toToken.address,
+    from_amount: atomicAmount,
+    owner_address: "0x0000000000000000000000000000000000000000",
+    recipient: "0x0000000000000000000000000000000000000000",
+    expiration: Math.floor(Date.now() / 1000) + 120,
+    gas_mode: "receive_less"
+  });
+
+  const minReceive = quote.route_params.minOutputAmount;
+  const receiveAmount = formatUnits(minReceive, toToken.decimals);
+
+  let text = `💸 *Sera Swap Quote*\n\n`;
+  text += `• Input: ${amountStr} ${fromToken.symbol}\n`;
+
+  if (quote.fee_breakdown && quote.fee_breakdown.gas_cost_from_token) {
+    try {
+      const gasCostRaw = parseUnits(quote.fee_breakdown.gas_cost_from_token, fromToken.decimals);
+      const netInputRaw = BigInt(atomicAmount) - BigInt(gasCostRaw);
+
+      if (netInputRaw > 0n) {
+        const gasCost = quote.fee_breakdown.gas_cost_from_token;
+        const gasCostUsd = quote.fee_breakdown.gas_cost_usd;
+        const netInput = formatUnits(netInputRaw.toString(), fromToken.decimals);
+        const numericMinReceive = Number(receiveAmount);
+        const numericNetInput = Number(netInput);
+        const effectiveRate = numericMinReceive / numericNetInput;
+
+        text += `• Estimated Gas: ${gasCost} ${fromToken.symbol} ($${gasCostUsd})\n`;
+        text += `• Amount Swapped: ${netInput} ${fromToken.symbol}\n`;
+        text += `• Minimum Receive: ${receiveAmount} ${toToken.symbol}\n`;
+        text += `• Effective Market Rate: ~${effectiveRate.toFixed(5)} ${toToken.symbol} per ${fromToken.symbol}\n\n`;
+      } else {
+        text += `• Minimum Receive: ${receiveAmount} ${toToken.symbol}\n\n`;
+      }
+    } catch (e) {
+      text += `• Minimum Receive: ${receiveAmount} ${toToken.symbol}\n\n`;
+    }
+  } else {
+    text += `• Minimum Receive: ${receiveAmount} ${toToken.symbol}\n\n`;
+  }
+
+  text += `ℹ️ Minimum receive includes slippage protection.`;
+  return text;
+}
+
+async function editOrReply(ctx: any, text: string, keyboard: InlineKeyboard) {
+  if (ctx.callbackQuery) {
+    try {
+      await ctx.editMessageText(text, {
+        parse_mode: "Markdown",
+        reply_markup: keyboard,
+      });
+      return;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("message is not modified")) {
+        return;
+      }
+      console.warn("editMessageText failed, falling back to reply:", error);
+    }
+  }
+  await ctx.reply(text, {
+    parse_mode: "Markdown",
+    reply_markup: keyboard,
+  });
+}
+
+// ==========================================
 // Bot Commands
 // ==========================================
 
 // /start command
 bot.command("start", async (ctx) => {
-  const text = `👋 *Welcome to Sera Scout*
-
-Market companion bot for Sera Protocol.
-
-*Available commands:*
-
-/quote <from> <to> <amount> - Get a swap price quote
-/markets - Discover available Sera trading pairs
-/alert <from> <to> <above|below> <rate> - Create a quote rate alert
-/myalerts - List your active alerts
-/removealert <id> - Remove an active alert
-/watchnewmarkets <on|off> - Subscribe/unsubscribe to new market listings
-/stats - View protocol market and token statistics
-/token <symbol> - Lookup token details and market counts
-/trending - View tokens appearing in the most markets
-/about - Learn more about Sera Scout`;
-  await ctx.reply(text, { parse_mode: "Markdown" });
+  const { text, keyboard } = getMainMenu();
+  await ctx.reply(text, { parse_mode: "Markdown", reply_markup: keyboard });
 });
 
 // /about command
 bot.command("about", async (ctx) => {
-  const text = `*Sera Scout*
-
-Telegram companion bot for the Sera Protocol, focused on market discovery, quote generation, and future trading tools.
-
-*Features:*
-
-• *Quote Generation*: Fetch real-time, slippage-protected swap quotes directly from Sera Mainnet.
-• *Market Discovery*: Discover available trading pairs on Sera Mainnet using /markets and trending tokens via /trending.
-• *Market Watcher*: Get instant notifications when new pairs are listed via /watchnewmarkets.
-• *Price Alerts*: Get real-time notifications for market movements using /alert.`;
-  await ctx.reply(text, { parse_mode: "Markdown" });
+  const text = `*Sera Scout*\n\n` +
+    `Telegram companion bot for the Sera Protocol, focused on market discovery, quote generation, and future trading tools.\n\n` +
+    `• *Quote Generation*: Fetch real-time, slippage-protected swap quotes directly from Sera Mainnet.\n` +
+    `• *Market Discovery*: Discover available trading pairs on Sera Mainnet using /markets and trending tokens via /trending.\n` +
+    `• *Market Watcher*: Get instant notifications when new pairs are listed via /watchnewmarkets.\n` +
+    `• *Price Alerts*: Get real-time notifications for market movements using /alert.`;
+  const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+  await ctx.reply(text, { parse_mode: "Markdown", reply_markup: keyboard });
 });
 
 // /alpha command
@@ -67,7 +428,8 @@ bot.command("alpha", async (ctx) => {
     const { board, lastUpdated } = getLatestAlphaBoard();
 
     if (!lastUpdated) {
-      await ctx.reply("🔄 Alpha Board is currently generating the first run. Please try again in a moment.");
+      const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+      await ctx.reply("🔄 Alpha Board is currently generating the first run. Please try again in a moment.", { reply_markup: keyboard });
       return;
     }
 
@@ -85,7 +447,8 @@ bot.command("alpha", async (ctx) => {
       }
     }
 
-    await ctx.reply(text.trim(), { parse_mode: "Markdown" });
+    const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+    await ctx.reply(text.trim(), { parse_mode: "Markdown", reply_markup: keyboard });
   } catch (error) {
     console.error("Bot /alpha handler error:", error);
     await ctx.reply(ERROR_MESSAGE);
@@ -95,8 +458,7 @@ bot.command("alpha", async (ctx) => {
 // /liquidity command
 bot.command("liquidity", async (ctx) => {
   try {
-    // Show a loading message or typing action since this query might hit subgraph
-    await ctx.replyWithChatAction("typing");
+    await ctx.replyWithChatAction("typing").catch(() => {});
     
     const markets = await getTopLiquidityMarkets(10);
     
@@ -112,7 +474,8 @@ bot.command("liquidity", async (ctx) => {
       }
     }
 
-    await ctx.reply(text.trim(), { parse_mode: "Markdown" });
+    const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+    await ctx.reply(text.trim(), { parse_mode: "Markdown", reply_markup: keyboard });
   } catch (error) {
     console.error("Bot /liquidity handler error:", error);
     await ctx.reply(ERROR_MESSAGE);
@@ -128,7 +491,7 @@ bot.command("scan", async (ctx) => {
       return;
     }
 
-    await ctx.replyWithChatAction("typing");
+    await ctx.replyWithChatAction("typing").catch(() => {});
 
     const results = await getMarketScan(tokenArg);
     if (results.length === 0) {
@@ -145,7 +508,8 @@ bot.command("scan", async (ctx) => {
       text += `*Taker Fee:* ${r.takerFee}\n\n`;
     }
 
-    await ctx.reply(text.trim(), { parse_mode: "Markdown" });
+    const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+    await ctx.reply(text.trim(), { parse_mode: "Markdown", reply_markup: keyboard });
   } catch (error) {
     console.error("Bot /scan handler error:", error);
     await ctx.reply(ERROR_MESSAGE);
@@ -162,78 +526,15 @@ bot.command("quote", async (ctx) => {
     }
 
     const [fromSym, toSym, amountStr] = args;
-    await ctx.replyWithChatAction("typing");
+    await ctx.replyWithChatAction("typing").catch(() => {});
 
-    // Fetch token configuration
-    const tokens = await getTokens();
-    const fromToken = tokens.find(t => t.symbol.toUpperCase() === fromSym.toUpperCase());
-    const toToken = tokens.find(t => t.symbol.toUpperCase() === toSym.toUpperCase());
+    const text = await fetchAndFormatQuote(fromSym, toSym, amountStr);
+    const keyboard = new InlineKeyboard()
+      .text("🔄 Refresh", `q_amt:${fromSym.toUpperCase()}:${toSym.toUpperCase()}:${amountStr}`)
+      .text("🔔 Set Alert", `al_flow:${fromSym.toUpperCase()}:${toSym.toUpperCase()}`).row()
+      .text("🏠 Home", "home");
 
-    if (!fromToken) {
-      await ctx.reply(`❌ Unsupported source token symbol: *${fromSym}*`, { parse_mode: "Markdown" });
-      return;
-    }
-    if (!toToken) {
-      await ctx.reply(`❌ Unsupported destination token symbol: *${toSym}*`, { parse_mode: "Markdown" });
-      return;
-    }
-
-    // Convert amount safely using decimal-safe conversion helper
-    let atomicAmount: string;
-    try {
-      atomicAmount = parseUnits(amountStr, fromToken.decimals);
-    } catch (e) {
-      await ctx.reply(`❌ Invalid amount *${amountStr}*. Please specify a valid number.`, { parse_mode: "Markdown" });
-      return;
-    }
-
-    // Fetch Quote from Mainnet REST API
-    const quote = await getQuote({
-      from_token: fromToken.address,
-      to_token: toToken.address,
-      from_amount: atomicAmount,
-      owner_address: "0x0000000000000000000000000000000000000000", // Query-only placeholder
-      recipient: "0x0000000000000000000000000000000000000000",
-      expiration: Math.floor(Date.now() / 1000) + 120,
-      gas_mode: "receive_less"
-    });
-
-    const minReceive = quote.route_params.minOutputAmount;
-    const receiveAmount = formatUnits(minReceive, toToken.decimals);
-
-    let text = `💸 *Sera Swap Quote*\n\n`;
-    text += `• Input: ${amountStr} ${fromToken.symbol}\n`;
-
-    if (quote.fee_breakdown && quote.fee_breakdown.gas_cost_from_token) {
-      try {
-        const gasCostRaw = parseUnits(quote.fee_breakdown.gas_cost_from_token, fromToken.decimals);
-        const netInputRaw = BigInt(atomicAmount) - BigInt(gasCostRaw);
-
-        if (netInputRaw > 0n) {
-          const gasCost = quote.fee_breakdown.gas_cost_from_token;
-          const gasCostUsd = quote.fee_breakdown.gas_cost_usd;
-          const netInput = formatUnits(netInputRaw.toString(), fromToken.decimals);
-          const numericMinReceive = Number(receiveAmount);
-          const numericNetInput = Number(netInput);
-          const effectiveRate = numericMinReceive / numericNetInput;
-
-          text += `• Estimated Gas: ${gasCost} ${fromToken.symbol} ($${gasCostUsd})\n`;
-          text += `• Amount Swapped: ${netInput} ${fromToken.symbol}\n`;
-          text += `• Minimum Receive: ${receiveAmount} ${toToken.symbol}\n`;
-          text += `• Effective Market Rate: ~${effectiveRate.toFixed(5)} ${toToken.symbol} per ${fromToken.symbol}\n\n`;
-        } else {
-          text += `• Minimum Receive: ${receiveAmount} ${toToken.symbol}\n\n`;
-        }
-      } catch (e) {
-        text += `• Minimum Receive: ${receiveAmount} ${toToken.symbol}\n\n`;
-      }
-    } else {
-      text += `• Minimum Receive: ${receiveAmount} ${toToken.symbol}\n\n`;
-    }
-
-    text += `ℹ️ Minimum receive includes slippage protection.`;
-
-    await ctx.reply(text, { parse_mode: "Markdown" });
+    await ctx.reply(text, { parse_mode: "Markdown", reply_markup: keyboard });
   } catch (error) {
     console.error("Bot /quote error:", error);
     const msg = error instanceof Error ? error.message : "Unknown error";
@@ -245,57 +546,10 @@ bot.command("quote", async (ctx) => {
 bot.command("markets", async (ctx) => {
   try {
     const filterArg = ctx.match?.trim();
-    await ctx.replyWithChatAction("typing");
+    await ctx.replyWithChatAction("typing").catch(() => {});
 
-    // Fetch markets from in-memory cache (5m TTL)
-    const allMarkets = await getCachedMarkets();
-
-    // Sort alphabetically by symbol
-    const sortedMarkets = [...allMarkets].sort((a, b) => a.symbol.localeCompare(b.symbol));
-
-    if (!filterArg) {
-      // Display first 20 markets
-      const displayLimit = Math.min(sortedMarkets.length, 20);
-      const displayed = sortedMarkets.slice(0, displayLimit);
-
-      let text = `📈 *Sera Markets*\n\n`;
-      for (const m of displayed) {
-        text += `• ${m.base_symbol} / ${m.quote_symbol}\n`;
-      }
-      text += `\nShowing ${displayLimit} of ${sortedMarkets.length} markets\n\n`;
-      text += `Try:\n\`/markets USDC\``;
-
-      await ctx.reply(text, { parse_mode: "Markdown" });
-    } else {
-      const searchStr = filterArg.toUpperCase();
-      const filtered = sortedMarkets.filter(m => 
-        m.symbol.toUpperCase().includes(searchStr) ||
-        m.base_symbol.toUpperCase().includes(searchStr) ||
-        m.quote_symbol.toUpperCase().includes(searchStr)
-      );
-
-      if (filtered.length === 0) {
-        await ctx.reply(`❌ No markets found matching "${filterArg}"\n\nTry:\n\`/markets USDC\``, { parse_mode: "Markdown" });
-        return;
-      }
-
-      const displayLimit = Math.min(filtered.length, 25);
-      const displayed = filtered.slice(0, displayLimit);
-
-      let text = `📈 *Sera Markets*\n\n`;
-      for (const m of displayed) {
-        text += `• ${m.base_symbol} / ${m.quote_symbol}\n`;
-      }
-
-      if (filtered.length > 25) {
-        const remaining = filtered.length - 25;
-        text += `...and ${remaining} more markets.\n`;
-      }
-
-      text += `\nShowing ${displayLimit} of ${filtered.length} matching markets`;
-
-      await ctx.reply(text, { parse_mode: "Markdown" });
-    }
+    const { text, keyboard } = await getMarketsPage(1, filterArg);
+    await ctx.reply(text, { parse_mode: "Markdown", reply_markup: keyboard });
   } catch (error) {
     console.error("Bot /markets handler error:", error);
     await ctx.reply("⚠️ Failed to load markets. Please try again later.");
@@ -324,9 +578,8 @@ bot.command("alert", async (ctx) => {
       return;
     }
 
-    await ctx.replyWithChatAction("typing");
+    await ctx.replyWithChatAction("typing").catch(() => {});
 
-    // Fetch token configuration
     const tokens = await getTokens();
     const fromToken = tokens.find(t => t.symbol.toUpperCase() === fromSym.toUpperCase());
     const toToken = tokens.find(t => t.symbol.toUpperCase() === toSym.toUpperCase());
@@ -340,7 +593,6 @@ bot.command("alert", async (ctx) => {
       return;
     }
 
-    // Add alert to persistent storage
     const alert = addAlert({
       telegram_chat_id: ctx.chat.id,
       from_token: fromToken.symbol,
@@ -354,10 +606,14 @@ bot.command("alert", async (ctx) => {
     });
 
     const triggerLabel = condition === "above" ? "Above" : "Below";
+    const keyboard = new InlineKeyboard()
+      .text("🔔 My Alerts", "alerts:1")
+      .text("🏠 Home", "home");
+
     await ctx.reply(`✅ *Alert Created Successfully*\n\n` +
-      `• *Pair:* ${alert.from_token} → ${alert.to_token}\n` +
+      `• *Pair:* ${alert.from_token} ➔ ${alert.to_token}\n` +
       `• *Trigger:* ${triggerLabel} ${alert.target_rate.toFixed(4)}\n` +
-      `• *Alert ID:* ${alert.id}`, { parse_mode: "Markdown" });
+      `• *Alert ID:* ${alert.id}`, { parse_mode: "Markdown", reply_markup: keyboard });
 
   } catch (error) {
     console.error("Bot /alert error:", error);
@@ -368,19 +624,8 @@ bot.command("alert", async (ctx) => {
 // /myalerts command
 bot.command("myalerts", async (ctx) => {
   try {
-    const alerts = listAlertsForChat(ctx.chat.id);
-    if (alerts.length === 0) {
-      await ctx.reply("ℹ️ You have no active quote alerts.");
-      return;
-    }
-
-    let text = `🔔 *Active Quote Alerts*\n\n`;
-    for (const a of alerts) {
-      const condLabel = a.condition === "above" ? "Above" : "Below";
-      text += `• *ID ${a.id}:* ${a.from_token} → ${a.to_token} when ${condLabel} ${a.target_rate.toFixed(4)}\n`;
-    }
-    text += `\nTo remove an alert, use:\n\`/removealert <id>\``;
-    await ctx.reply(text, { parse_mode: "Markdown" });
+    const { text, keyboard } = getAlertsPage(ctx.chat.id, 1);
+    await ctx.reply(text, { parse_mode: "Markdown", reply_markup: keyboard });
   } catch (error) {
     console.error("Bot /myalerts error:", error);
     await ctx.reply("⚠️ Failed to load alerts.");
@@ -404,10 +649,14 @@ bot.command("removealert", async (ctx) => {
     }
 
     const success = removeAlert(alertId);
+    const keyboard = new InlineKeyboard()
+      .text("🔔 My Alerts", "alerts:1")
+      .text("🏠 Home", "home");
+
     if (success) {
-      await ctx.reply(`✅ Alert ID *${alertId}* has been removed.`, { parse_mode: "Markdown" });
+      await ctx.reply(`✅ Alert ID *${alertId}* has been removed.`, { parse_mode: "Markdown", reply_markup: keyboard });
     } else {
-      await ctx.reply(`❌ Failed to remove alert ID *${alertId}*.`, { parse_mode: "Markdown" });
+      await ctx.reply(`❌ Failed to remove alert ID *${alertId}*.`, { parse_mode: "Markdown", reply_markup: keyboard });
     }
   } catch (error) {
     console.error("Bot /removealert error:", error);
@@ -424,19 +673,21 @@ bot.command("watchnewmarkets", async (ctx) => {
       return;
     }
 
+    const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+
     if (mode === "on") {
       const success = subscribeChat(ctx.chat.id);
       if (success) {
-        await ctx.reply("🔔 *New Market Watcher Activated*\n\nYou will receive notifications when new trading pairs are listed on Sera Protocol.", { parse_mode: "Markdown" });
+        await ctx.reply("🔔 *New Market Watcher Activated*\n\nYou will receive notifications when new trading pairs are listed on Sera Protocol.", { parse_mode: "Markdown", reply_markup: keyboard });
       } else {
-        await ctx.reply("ℹ️ You are already subscribed to new market notifications.", { parse_mode: "Markdown" });
+        await ctx.reply("ℹ️ You are already subscribed to new market notifications.", { parse_mode: "Markdown", reply_markup: keyboard });
       }
     } else {
       const success = unsubscribeChat(ctx.chat.id);
       if (success) {
-        await ctx.reply("🔕 *New Market Watcher Deactivated*\n\nYou will no longer receive notifications for new markets.", { parse_mode: "Markdown" });
+        await ctx.reply("🔕 *New Market Watcher Deactivated*\n\nYou will no longer receive notifications for new markets.", { parse_mode: "Markdown", reply_markup: keyboard });
       } else {
-        await ctx.reply("ℹ️ You are not subscribed to new market notifications.", { parse_mode: "Markdown" });
+        await ctx.reply("ℹ️ You are not subscribed to new market notifications.", { parse_mode: "Markdown", reply_markup: keyboard });
       }
     }
   } catch (error) {
@@ -448,39 +699,9 @@ bot.command("watchnewmarkets", async (ctx) => {
 // /stats command
 bot.command("stats", async (ctx) => {
   try {
-    await ctx.replyWithChatAction("typing");
-
-    const markets = await getCachedMarkets();
-    const tokens = await getTokens();
-
-    const totalMarkets = markets.length;
-    const totalTokens = tokens.length;
-
-    // Last refresh time
-    const lastRefreshTs = getMarketsCacheTimestamp();
-    const lastRefreshText = lastRefreshTs 
-      ? new Date(lastRefreshTs).toISOString().replace("T", " ").substring(0, 19) + " UTC"
-      : "Just now";
-
-    // Most common quote tokens count
-    const quoteCounts: Record<string, number> = {};
-    for (const m of markets) {
-      quoteCounts[m.quote_symbol] = (quoteCounts[m.quote_symbol] || 0) + 1;
-    }
-    const usdtCount = quoteCounts["USDT"] || 0;
-    const usdcCount = quoteCounts["USDC"] || 0;
-    const eursCount = quoteCounts["EURS"] || 0;
-
-    let text = `📊 *Sera Market Stats*\n\n`;
-    text += `• Total Markets: ${totalMarkets}\n`;
-    text += `• Total Tokens: ${totalTokens}\n`;
-    text += `• Last Refresh: ${lastRefreshText}\n\n`;
-    text += `*Most Common Quote Tokens:*\n\n`;
-    text += `• USDT: ${usdtCount} markets\n`;
-    text += `• USDC: ${usdcCount} markets\n`;
-    text += `• EURS: ${eursCount} markets\n`;
-
-    await ctx.reply(text, { parse_mode: "Markdown" });
+    await ctx.replyWithChatAction("typing").catch(() => {});
+    const { text, keyboard } = await getStatsView();
+    await ctx.reply(text, { parse_mode: "Markdown", reply_markup: keyboard });
   } catch (error) {
     console.error("Bot /stats error:", error);
     await ctx.reply("⚠️ Failed to load statistics.");
@@ -496,7 +717,7 @@ bot.command("token", async (ctx) => {
       return;
     }
 
-    await ctx.replyWithChatAction("typing");
+    await ctx.replyWithChatAction("typing").catch(() => {});
 
     const tokens = await getTokens();
     const token = tokens.find(t => t.symbol.toUpperCase() === symbol.toUpperCase());
@@ -513,15 +734,16 @@ bot.command("token", async (ctx) => {
     );
     const marketCount = tokenMarkets.length;
 
-    let text = `🪙 *Token Information*\n\n`;
-    text += `*Symbol:*\n${token.symbol}\n\n`;
-    text += `*Address:*\n\`${token.address}\`\n\n`;
-    text += `*Decimals:*\n${token.decimals}\n\n`;
-    text += `*Currency:*\n${token.currency}\n\n`;
-    text += `*Minimum Trade:*\n${token.min_trade_amount}\n\n`;
-    text += `*Markets:*\n${marketCount} markets`;
+    let text = `🪙 *Token Information*\n\n` +
+      `*Symbol:*\n${token.symbol}\n\n` +
+      `*Address:*\n\`${token.address}\`\n\n` +
+      `*Decimals:*\n${token.decimals}\n\n` +
+      `*Currency:*\n${token.currency}\n\n` +
+      `*Minimum Trade:*\n${token.min_trade_amount}\n\n` +
+      `*Markets:*\n${marketCount} markets`;
 
-    await ctx.reply(text, { parse_mode: "Markdown" });
+    const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+    await ctx.reply(text, { parse_mode: "Markdown", reply_markup: keyboard });
   } catch (error) {
     console.error("Bot /token error:", error);
     await ctx.reply("⚠️ Failed to load token information.");
@@ -531,35 +753,251 @@ bot.command("token", async (ctx) => {
 // /trending command
 bot.command("trending", async (ctx) => {
   try {
-    await ctx.replyWithChatAction("typing");
-
-    const markets = await getCachedMarkets();
-    const counts: Record<string, { symbol: string; count: number }> = {};
-    for (const m of markets) {
-      if (!counts[m.base_address.toLowerCase()]) {
-        counts[m.base_address.toLowerCase()] = { symbol: m.base_symbol, count: 0 };
-      }
-      counts[m.base_address.toLowerCase()].count++;
-
-      if (!counts[m.quote_address.toLowerCase()]) {
-        counts[m.quote_address.toLowerCase()] = { symbol: m.quote_symbol, count: 0 };
-      }
-      counts[m.quote_address.toLowerCase()].count++;
-    }
-
-    const sorted = Object.values(counts).sort((a, b) => b.count - a.count);
-
-    let text = `🔥 *Most Connected Tokens*\n\n`;
-    const limit = Math.min(sorted.length, 10);
-    for (let i = 0; i < limit; i++) {
-      const entry = sorted[i];
-      text += `${i + 1}. *${entry.symbol}* (${entry.count} markets)\n`;
-    }
-
-    await ctx.reply(text, { parse_mode: "Markdown" });
+    await ctx.replyWithChatAction("typing").catch(() => {});
+    const { text, keyboard } = await getTrendingPage(1);
+    await ctx.reply(text, { parse_mode: "Markdown", reply_markup: keyboard });
   } catch (error) {
     console.error("Bot /trending error:", error);
     await ctx.reply("⚠️ Failed to load trending tokens.");
+  }
+});
+
+// ==========================================
+// Callback Query Handling
+// ==========================================
+
+bot.on("callback_query:data", async (ctx) => {
+  const data = ctx.callbackQuery.data;
+  await ctx.answerCallbackQuery().catch(() => {});
+
+  const parts = data.split(":");
+  const action = parts[0];
+
+  try {
+    if (action === "home") {
+      const { text, keyboard } = getMainMenu();
+      await editOrReply(ctx, text, keyboard);
+    } else if (action === "menu_quote") {
+      const { text, keyboard } = getQuoteMenu();
+      await editOrReply(ctx, text, keyboard);
+    } else if (action === "mkt") {
+      const page = parseInt(parts[1] || "1", 10);
+      const filter = parts[2] || "";
+      const { text, keyboard } = await getMarketsPage(page, filter);
+      await editOrReply(ctx, text, keyboard);
+    } else if (action === "mkt_det") {
+      const base = parts[1];
+      const quote = parts[2];
+      const backPage = parseInt(parts[3] || "1", 10);
+      const filter = parts[4] || "";
+      const { text, keyboard } = await getMarketDetails(base, quote, backPage, filter);
+      await editOrReply(ctx, text, keyboard);
+    } else if (action === "q_flow") {
+      const from = parts[1];
+      const to = parts[2];
+      const { text, keyboard } = getQuoteFlow(from, to);
+      await editOrReply(ctx, text, keyboard);
+    } else if (action === "q_custom") {
+      const from = parts[1];
+      const to = parts[2];
+      
+      userSessions.set(ctx.from.id, {
+        state: "awaiting_quote_amount",
+        pendingQuote: { from, to }
+      });
+
+      const text = `💸 *Sera Swap Quote: ${from} ➔ ${to}*\n\nPlease enter the swap amount (e.g. \`150.5\`):`;
+      const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+      await editOrReply(ctx, text, keyboard);
+    } else if (action === "q_custom_start") {
+      userSessions.set(ctx.from.id, {
+        state: "awaiting_quote_pair"
+      });
+
+      const text = `💸 *Sera Swap Quote*\n\nPlease enter the token swap pair (e.g. \`USDC USDT\`):`;
+      const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+      await editOrReply(ctx, text, keyboard);
+    } else if (action === "q_amt") {
+      const from = parts[1];
+      const to = parts[2];
+      const amount = parts[3];
+      
+      await ctx.replyWithChatAction("typing").catch(() => {});
+      
+      try {
+        const text = await fetchAndFormatQuote(from, to, amount);
+        const keyboard = new InlineKeyboard()
+          .text("🔄 Refresh", `q_amt:${from}:${to}:${amount}`)
+          .text("🔔 Set Alert", `al_flow:${from}:${to}`).row()
+          .text("🏠 Home", "home");
+        await editOrReply(ctx, text, keyboard);
+      } catch (err: any) {
+        const msg = err.message || "Unknown error";
+        const text = `❌ Failed to generate quote: *${msg}*`;
+        const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+        await editOrReply(ctx, text, keyboard);
+      }
+    } else if (action === "al_flow") {
+      const from = parts[1];
+      const to = parts[2];
+      const { text, keyboard } = getAlertFlow(from, to);
+      await editOrReply(ctx, text, keyboard);
+    } else if (action === "al_cond") {
+      const from = parts[1];
+      const to = parts[2];
+      const cond = parts[3] as "above" | "below";
+
+      userSessions.set(ctx.from.id, {
+        state: "awaiting_alert_rate",
+        pendingAlert: { from, to, condition: cond }
+      });
+
+      const text = `🔔 *Create Alert for ${from} ➔ ${to}*\n\nPlease enter the target exchange rate (e.g. \`1.08\`):`;
+      const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+      await editOrReply(ctx, text, keyboard);
+    } else if (action === "alerts") {
+      const page = parseInt(parts[1] || "1", 10);
+      const { text, keyboard } = getAlertsPage(ctx.from.id, page);
+      await editOrReply(ctx, text, keyboard);
+    } else if (action === "rm_al") {
+      const id = parts[1];
+      const page = parseInt(parts[2] || "1", 10);
+      removeAlert(id);
+      const { text, keyboard } = getAlertsPage(ctx.from.id, page);
+      await editOrReply(ctx, text, keyboard);
+    } else if (action === "trd") {
+      const page = parseInt(parts[1] || "1", 10);
+      const { text, keyboard } = await getTrendingPage(page);
+      await editOrReply(ctx, text, keyboard);
+    } else if (action === "stats") {
+      const { text, keyboard } = await getStatsView();
+      await editOrReply(ctx, text, keyboard);
+    }
+  } catch (error) {
+    console.error("Callback query error:", error);
+    await ctx.reply("⚠️ An error occurred while processing your request. Please try again.").catch(() => {});
+  }
+});
+
+// ==========================================
+// Session Text Message Parsing
+// ==========================================
+
+bot.on("message:text", async (ctx, next) => {
+  const session = userSessions.get(ctx.from.id);
+  if (!session || session.state === "idle") {
+    return next();
+  }
+
+  const text = ctx.message.text.trim();
+  
+  if (session.state === "awaiting_quote_pair") {
+    userSessions.delete(ctx.from.id);
+
+    const parts = text.split(/[\s/-]+/);
+    if (parts.length < 2) {
+      const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+      await ctx.reply("❌ Invalid format. Please enter two token symbols separated by a space (e.g. `USDC USDT`).", { reply_markup: keyboard });
+      return;
+    }
+    const from = parts[0].toUpperCase();
+    const to = parts[1].toUpperCase();
+
+    try {
+      const tokens = await getTokens();
+      const fromToken = tokens.find(t => t.symbol.toUpperCase() === from);
+      const toToken = tokens.find(t => t.symbol.toUpperCase() === to);
+
+      if (!fromToken || !toToken) {
+        const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+        await ctx.reply(`❌ Unsupported token(s). Supported tokens: ${tokens.map(t => t.symbol).join(", ")}`, { reply_markup: keyboard });
+        return;
+      }
+
+      const { text: flowText, keyboard } = getQuoteFlow(fromToken.symbol, toToken.symbol);
+      await ctx.reply(flowText, { parse_mode: "Markdown", reply_markup: keyboard });
+    } catch (err) {
+      const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+      await ctx.reply("⚠️ Failed to verify tokens. Please try again later.", { reply_markup: keyboard });
+    }
+
+  } else if (session.state === "awaiting_quote_amount") {
+    userSessions.delete(ctx.from.id);
+
+    const amount = Number(text);
+    if (isNaN(amount) || amount <= 0) {
+      const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+      await ctx.reply("❌ Invalid amount. Must be a positive number.", { reply_markup: keyboard });
+      return;
+    }
+
+    const { from, to } = session.pendingQuote!;
+    await ctx.replyWithChatAction("typing").catch(() => {});
+
+    try {
+      const quoteText = await fetchAndFormatQuote(from, to, text);
+      const keyboard = new InlineKeyboard()
+        .text("🔄 Refresh", `q_amt:${from}:${to}:${text}`)
+        .text("🔔 Set Alert", `al_flow:${from}:${to}`).row()
+        .text("🏠 Home", "home");
+      await ctx.reply(quoteText, { parse_mode: "Markdown", reply_markup: keyboard });
+    } catch (err: any) {
+      const msg = err.message || "Unknown error";
+      const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+      await ctx.reply(`❌ Failed to generate quote: *${msg}*`, { parse_mode: "Markdown", reply_markup: keyboard });
+    }
+
+  } else if (session.state === "awaiting_alert_rate") {
+    userSessions.delete(ctx.from.id);
+
+    const targetRate = Number(text);
+    if (isNaN(targetRate) || targetRate <= 0) {
+      const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+      await ctx.reply("❌ Invalid rate. Must be a positive number.", { reply_markup: keyboard });
+      return;
+    }
+
+    const { from, to, condition } = session.pendingAlert!;
+    await ctx.replyWithChatAction("typing").catch(() => {});
+
+    try {
+      const tokens = await getTokens();
+      const fromToken = tokens.find(t => t.symbol.toUpperCase() === from.toUpperCase());
+      const toToken = tokens.find(t => t.symbol.toUpperCase() === to.toUpperCase());
+
+      if (!fromToken || !toToken) {
+        const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+        await ctx.reply("❌ Unsupported token pair for alert.", { reply_markup: keyboard });
+        return;
+      }
+
+      const alert = addAlert({
+        telegram_chat_id: ctx.chat.id,
+        from_token: fromToken.symbol,
+        from_address: fromToken.address,
+        from_decimals: fromToken.decimals,
+        to_token: toToken.symbol,
+        to_address: toToken.address,
+        to_decimals: toToken.decimals,
+        condition: condition,
+        target_rate: targetRate
+      });
+
+      const condLabel = condition === "above" ? "Above" : "Below";
+      const replyText = `✅ *Alert Created Successfully*\n\n` +
+        `• *Pair:* ${alert.from_token} ➔ ${alert.to_token}\n` +
+        `• *Trigger:* ${condLabel} ${alert.target_rate.toFixed(4)}\n` +
+        `• *Alert ID:* ${alert.id}`;
+      
+      const keyboard = new InlineKeyboard()
+        .text("🔔 My Alerts", "alerts:1")
+        .text("🏠 Home", "home");
+
+      await ctx.reply(replyText, { parse_mode: "Markdown", reply_markup: keyboard });
+    } catch (err) {
+      const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+      await ctx.reply("⚠️ Failed to create alert. Please try again.", { reply_markup: keyboard });
+    }
   }
 });
 
@@ -577,8 +1015,6 @@ async function start() {
   
   // Start Alpha Scheduler automatically on startup
   console.log("⏰ Starting background Alpha Scheduler...");
-  // Run asynchronously without blocking bot start, but wait for first generation if possible
-  // so the bot starts with cache populated.
   startAlphaScheduler().catch((err) => {
     console.error("Failed to start Alpha Scheduler:", err);
   });
