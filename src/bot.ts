@@ -9,6 +9,8 @@ import { subscribeChat, unsubscribeChat, getNewestMarket } from "./services/disc
 import { startDiscoveryScheduler } from "./services/discovery-scheduler.js";
 import { subscribeDigest, unsubscribeDigest } from "./services/digest-storage.js";
 import { startDigestScheduler } from "./services/digest-scheduler.js";
+import { getActiveSymbols, getLastScanTime } from "./services/active-market-storage.js";
+import { startActiveMarketScheduler } from "./services/active-market-scheduler.js";
 
 // Load Bot Token from environment variable
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -65,9 +67,14 @@ function getQuoteMenu() {
   return { text, keyboard };
 }
 
-async function getMarketsPage(page: number, filter?: string) {
+async function getMarketsPage(page: number, filter?: string, onlyActive = false) {
   const allMarkets = await getCachedMarkets();
   let sortedMarkets = [...allMarkets].sort((a, b) => a.symbol.localeCompare(b.symbol));
+
+  if (onlyActive) {
+    const activeSymbols = getActiveSymbols();
+    sortedMarkets = sortedMarkets.filter(m => activeSymbols.includes(m.symbol));
+  }
 
   const filterStr = filter?.toUpperCase() || "";
   if (filterStr) {
@@ -86,7 +93,7 @@ async function getMarketsPage(page: number, filter?: string) {
   const startIdx = (currentPage - 1) * pageSize;
   const pageMarkets = sortedMarkets.slice(startIdx, startIdx + pageSize);
 
-  let text = `📈 *Sera Markets*\n\n`;
+  let text = onlyActive ? `📈 *Active Sera Markets*\n\n` : `📚 *All Sera Markets (Registry)*\n\n`;
   if (filterStr) {
     text += `Filtered by: *${filterStr}*\n\n`;
   }
@@ -103,21 +110,23 @@ async function getMarketsPage(page: number, filter?: string) {
     const m2 = pageMarkets[i + 1];
     
     const filterParam = filterStr ? filterStr.substring(0, 10) : "";
+    const actionPrefix = onlyActive ? "mkt_det" : "all_mkt_det";
     if (m1 && m2) {
-      keyboard.text(`${m1.base_symbol}/${m1.quote_symbol}`, `mkt_det:${m1.base_symbol}:${m1.quote_symbol}:${currentPage}:${filterParam}`)
-              .text(`${m2.base_symbol}/${m2.quote_symbol}`, `mkt_det:${m2.base_symbol}:${m2.quote_symbol}:${currentPage}:${filterParam}`).row();
+      keyboard.text(`${m1.base_symbol}/${m1.quote_symbol}`, `${actionPrefix}:${m1.base_symbol}:${m1.quote_symbol}:${currentPage}:${filterParam}`)
+              .text(`${m2.base_symbol}/${m2.quote_symbol}`, `${actionPrefix}:${m2.base_symbol}:${m2.quote_symbol}:${currentPage}:${filterParam}`).row();
     } else if (m1) {
-      keyboard.text(`${m1.base_symbol}/${m1.quote_symbol}`, `mkt_det:${m1.base_symbol}:${m1.quote_symbol}:${currentPage}:${filterParam}`).row();
+      keyboard.text(`${m1.base_symbol}/${m1.quote_symbol}`, `${actionPrefix}:${m1.base_symbol}:${m1.quote_symbol}:${currentPage}:${filterParam}`).row();
     }
   }
 
   if (currentPage > 1 || currentPage < totalPages) {
     const filterParam = filterStr ? filterStr.substring(0, 10) : "";
+    const navPrefix = onlyActive ? "mkt" : "all_mkt";
     if (currentPage > 1) {
-      keyboard.text("⬅ Prev", `mkt:${currentPage - 1}:${filterParam}`);
+      keyboard.text("⬅ Prev", `${navPrefix}:${currentPage - 1}:${filterParam}`);
     }
     if (currentPage < totalPages) {
-      keyboard.text("➡ Next", `mkt:${currentPage + 1}:${filterParam}`);
+      keyboard.text("➡ Next", `${navPrefix}:${currentPage + 1}:${filterParam}`);
     }
     keyboard.row();
   }
@@ -125,12 +134,14 @@ async function getMarketsPage(page: number, filter?: string) {
   keyboard.text("🏠 Home", "home");
 
   text += `Page ${currentPage} of ${totalPages} (${totalMarkets} total markets)\n\n`;
-  text += `You can also search/filter using: \`/markets <query>\``;
+  text += onlyActive 
+    ? `Try:\n\`/markets USDC\`\n\nTo view all registered markets, use: \`/allmarkets\``
+    : `Try:\n\`/allmarkets USDC\``;
 
   return { text, keyboard };
 }
 
-async function getMarketDetails(base: string, quote: string, backPage: number, filter?: string) {
+async function getMarketDetails(base: string, quote: string, backPage: number, filter?: string, isFromActive = true) {
   const allMarkets = await getCachedMarkets();
   const market = allMarkets.find(m => 
     m.base_symbol.toUpperCase() === base.toUpperCase() && 
@@ -139,6 +150,9 @@ async function getMarketDetails(base: string, quote: string, backPage: number, f
 
   let text = `📈 *Market Details: ${base} / ${quote}*\n\n`;
   if (market) {
+    const activeSymbols = getActiveSymbols();
+    const isActive = activeSymbols.includes(market.symbol);
+    text += `• *Status:* ${isActive ? "🟢 Active (Liquid)" : "🔴 Inactive (No Liquidity)"}\n`;
     text += `• *Ticker Symbol:* ${market.symbol}\n`;
     text += `• *Base Asset:* ${market.base_symbol} (\`${market.base_address.substring(0, 6)}...${market.base_address.substring(38)}\`)\n`;
     text += `• *Quote Asset:* ${market.quote_symbol} (\`${market.quote_address.substring(0, 6)}...${market.quote_address.substring(38)}\`)\n`;
@@ -151,10 +165,11 @@ async function getMarketDetails(base: string, quote: string, backPage: number, f
   }
 
   const filterStr = filter || "";
+  const backPrefix = isFromActive ? "mkt" : "all_mkt";
   const keyboard = new InlineKeyboard()
     .text("💸 Get Quote", `q_flow:${base}:${quote}`)
     .text("🔔 Set Alert", `al_flow:${base}:${quote}`).row()
-    .text("⬅ Back to List", `mkt:${backPage}:${filterStr.substring(0, 10)}`)
+    .text("⬅ Back to List", `${backPrefix}:${backPage}:${filterStr.substring(0, 10)}`)
     .text("🏠 Home", "home");
 
   return { text, keyboard };
@@ -347,6 +362,33 @@ async function getDiscoverView() {
   return { text, keyboard };
 }
 
+async function getMarketStatusView() {
+  const allMarkets = await getCachedMarkets();
+  const activeSymbols = getActiveSymbols();
+  const lastScan = getLastScanTime();
+
+  const total = allMarkets.length;
+  const active = activeSymbols.length;
+  const inactive = Math.max(0, total - active);
+
+  const lastScanText = lastScan 
+    ? new Date(lastScan).toISOString().replace("T", " ").substring(0, 19) + " UTC"
+    : "Never";
+
+  let text = `📊 *Sera Market Intelligence Status*\n\n` +
+    `• *Total Markets (Registry):* ${total}\n` +
+    `• *Active Markets (with liquidity):* *${active}*\n` +
+    `• *Inactive Markets (no liquidity):* *${inactive}*\n` +
+    `• *Last Active Scan:* ${lastScanText}\n\n` +
+    `💡 _Active markets are scanned hourly by checking quote execution validity._`;
+
+  const keyboard = new InlineKeyboard()
+    .text("📈 Browse Active", "mkt:1")
+    .text("🏠 Home", "home");
+
+  return { text, keyboard };
+}
+
 async function fetchAndFormatQuote(fromSym: string, toSym: string, amountStr: string): Promise<string> {
   const tokens = await getTokens();
   const fromToken = tokens.find(t => t.symbol.toUpperCase() === fromSym.toUpperCase());
@@ -449,7 +491,8 @@ bot.command("about", async (ctx) => {
   const text = `*Sera Scout*\n\n` +
     `Telegram companion bot for the Sera Protocol, focused on market discovery, quote generation, and price intelligence.\n\n` +
     `• *Quote Generation*: Fetch real-time, slippage-protected swap quotes directly from Sera Mainnet.\n` +
-    `• *Market Discovery*: Discover trading pairs using /markets and trending tokens via /trending.\n` +
+    `• *Market Discovery*: Browse active liquidity markets using /markets or view the full registry using /allmarkets.\n` +
+    `• *Market Status*: Monitor active vs. inactive catalog counts using /marketstatus.\n` +
     `• *Intelligence Layer*: Gain insights on token connectivity and routes via /discover, /pair, and /compare.\n` +
     `• *Price Alerts & Digests*: Setup real-time rate alerts via /alert and daily digest summaries via /digest.`;
   const keyboard = new InlineKeyboard().text("🏠 Home", "home");
@@ -494,12 +537,14 @@ bot.command("pair", async (ctx) => {
     let text = `🔍 *Sera Pair Lookup: ${baseSym} / ${quoteSym}*\n\n`;
 
     if (directMarket) {
-      text += `✅ *Market Status:* Direct trading pair exists!\n` +
-        `• *Ticker:* ${directMarket.symbol}\n` +
-        `• *Base Decimals:* ${directMarket.base_decimals}\n` +
-        `• *Quote Decimals:* ${directMarket.quote_decimals}\n` +
-        `• *Tick Precision:* ${directMarket.tick_precision}\n` +
-        `• *Quantity Precision:* ${directMarket.quantity_precision}\n\n`;
+      const activeSymbols = getActiveSymbols();
+      const isActive = activeSymbols.includes(directMarket.symbol);
+      text += `• *Status:* ${isActive ? "🟢 Active (Liquid)" : "🔴 Inactive (No Liquidity)"}\n`;
+      text += `• *Ticker:* ${directMarket.symbol}\n`;
+      text += `• *Base Decimals:* ${directMarket.base_decimals}\n`;
+      text += `• *Quote Decimals:* ${directMarket.quote_decimals}\n`;
+      text += `• *Tick Precision:* ${directMarket.tick_precision}\n`;
+      text += `• *Quantity Precision:* ${directMarket.quantity_precision}\n\n`;
     } else {
       text += `❌ *Market Status:* Direct trading pair does not exist.\n\n`;
     }
@@ -645,6 +690,46 @@ bot.command("digest", async (ctx) => {
   }
 });
 
+// /markets command
+bot.command("markets", async (ctx) => {
+  try {
+    const filterArg = ctx.match?.trim();
+    await ctx.replyWithChatAction("typing").catch(() => {});
+
+    const { text, keyboard } = await getMarketsPage(1, filterArg, true);
+    await ctx.reply(text, { parse_mode: "Markdown", reply_markup: keyboard });
+  } catch (error) {
+    console.error("Bot /markets handler error:", error);
+    await ctx.reply("⚠️ Failed to load active markets. Please try again later.");
+  }
+});
+
+// /allmarkets command
+bot.command("allmarkets", async (ctx) => {
+  try {
+    const filterArg = ctx.match?.trim();
+    await ctx.replyWithChatAction("typing").catch(() => {});
+
+    const { text, keyboard } = await getMarketsPage(1, filterArg, false);
+    await ctx.reply(text, { parse_mode: "Markdown", reply_markup: keyboard });
+  } catch (error) {
+    console.error("Bot /allmarkets handler error:", error);
+    await ctx.reply("⚠️ Failed to load markets registry. Please try again later.");
+  }
+});
+
+// /marketstatus command
+bot.command("marketstatus", async (ctx) => {
+  try {
+    await ctx.replyWithChatAction("typing").catch(() => {});
+    const { text, keyboard } = await getMarketStatusView();
+    await ctx.reply(text, { parse_mode: "Markdown", reply_markup: keyboard });
+  } catch (error) {
+    console.error("Bot /marketstatus error:", error);
+    await ctx.reply("⚠️ Failed to load market status.");
+  }
+});
+
 // /alpha command
 bot.command("alpha", async (ctx) => {
   try {
@@ -762,20 +847,6 @@ bot.command("quote", async (ctx) => {
     console.error("Bot /quote error:", error);
     const msg = error instanceof Error ? error.message : "Unknown error";
     await ctx.reply(`❌ Failed to generate quote: *${msg}*`, { parse_mode: "Markdown" });
-  }
-});
-
-// /markets command
-bot.command("markets", async (ctx) => {
-  try {
-    const filterArg = ctx.match?.trim();
-    await ctx.replyWithChatAction("typing").catch(() => {});
-
-    const { text, keyboard } = await getMarketsPage(1, filterArg);
-    await ctx.reply(text, { parse_mode: "Markdown", reply_markup: keyboard });
-  } catch (error) {
-    console.error("Bot /markets handler error:", error);
-    await ctx.reply("⚠️ Failed to load markets. Please try again later.");
   }
 });
 
@@ -901,7 +972,7 @@ bot.command("watchnewmarkets", async (ctx) => {
     if (mode === "on") {
       const success = subscribeChat(ctx.chat.id);
       if (success) {
-        await ctx.reply("🔔 *New Market Watcher Activated*\n\nYou will receive notifications when new trading pairs are listed on Sera Protocol.", { parse_mode: "Markdown", reply_markup: keyboard });
+        await ctx.reply("🔔 *New Market Watcher Activated*\n\nYou will receive notifications when new trading pairs are registered or listed on Sera Protocol.", { parse_mode: "Markdown", reply_markup: keyboard });
       } else {
         await ctx.reply("ℹ️ You are already subscribed to new market notifications.", { parse_mode: "Markdown", reply_markup: keyboard });
       }
@@ -1006,14 +1077,26 @@ bot.on("callback_query:data", async (ctx) => {
     } else if (action === "mkt") {
       const page = parseInt(parts[1] || "1", 10);
       const filter = parts[2] || "";
-      const { text, keyboard } = await getMarketsPage(page, filter);
+      const { text, keyboard } = await getMarketsPage(page, filter, true);
+      await editOrReply(ctx, text, keyboard);
+    } else if (action === "all_mkt") {
+      const page = parseInt(parts[1] || "1", 10);
+      const filter = parts[2] || "";
+      const { text, keyboard } = await getMarketsPage(page, filter, false);
       await editOrReply(ctx, text, keyboard);
     } else if (action === "mkt_det") {
       const base = parts[1];
       const quote = parts[2];
       const backPage = parseInt(parts[3] || "1", 10);
       const filter = parts[4] || "";
-      const { text, keyboard } = await getMarketDetails(base, quote, backPage, filter);
+      const { text, keyboard } = await getMarketDetails(base, quote, backPage, filter, true);
+      await editOrReply(ctx, text, keyboard);
+    } else if (action === "all_mkt_det") {
+      const base = parts[1];
+      const quote = parts[2];
+      const backPage = parseInt(parts[3] || "1", 10);
+      const filter = parts[4] || "";
+      const { text, keyboard } = await getMarketDetails(base, quote, backPage, filter, false);
       await editOrReply(ctx, text, keyboard);
     } else if (action === "q_flow") {
       const from = parts[1];
@@ -1256,6 +1339,9 @@ async function start() {
   
   // Start Daily Digest Scheduler (hourly check)
   startDigestScheduler(bot);
+  
+  // Start Active Market Liquidity Scheduler (60m)
+  startActiveMarketScheduler(bot);
   
   await bot.start();
 }

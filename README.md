@@ -20,6 +20,8 @@ Sera Scout is designed to be the ultimate mobile companion for Sera Protocol use
 | :--- | :--- | :--- | :--- |
 | `/quote` | Fetch slippage-protected swap quotes | **Live** | Mainnet REST API |
 | `/markets` | List active trading markets and pairs | **Live** | Mainnet REST API |
+| `/allmarkets` | List all registered markets (registry) | **Live** | Mainnet REST API |
+| `/marketstatus` | Stats on total registry vs. active count | **Live** | Mainnet REST API |
 | `/alert` | Price alert triggers and notifications | **Live** | Mainnet REST API |
 | `/watchnewmarkets` | Subscribe to new listing notifications | **Live** | Mainnet REST API |
 | `/stats` | View catalog statistics | **Live** | Mainnet REST API |
@@ -79,7 +81,9 @@ graph TD
 *   `/start` — Greeting portal and command summary menu.
 *   `/about` — Details bot features and architecture.
 *   `/quote <FROM> <TO> <AMOUNT>` — Fetches a live swap quote from mainnet (e.g. `/quote USDC USDT 100`).
-*   `/markets [filter]` — Lists active trading pairs or filters them by token (e.g. `/markets USDC`).
+*   `/markets [filter]` — Lists active trading pairs with liquidity or filters them.
+*   `/allmarkets [filter]` — Lists all registered trading pairs in the static registry.
+*   `/marketstatus` — Displays statistics on active vs inactive markets and the last scan timestamp.
 *   `/alert <FROM> <TO> <above\|below> <rate>` — Configures a price rate trigger alert (e.g. `/alert EURS USDT above 1.08`).
 *   `/myalerts` — Lists active alerts for the chat.
 *   `/removealert <id>` — Removes a specific alert by its ID.
@@ -104,7 +108,8 @@ graph TD
 *   **Phase 3 (Completed)**: Build notification and alerts engine (`/alert`) allowing users to monitor price thresholds.
 *   **Phase 4 (Completed)**: Implement advanced market monitoring & statistics (`/watchnewmarkets`, `/stats`, `/token`, `/trending`).
 *   **Phase 5 (Completed)**: Implement Sera Intelligence Layer (`/discover`, `/pair`, `/compare`, `/digest` schedulers).
-*   **Phase 6 (Under Evaluation)**: Build direct account monitoring and trading actions (Balances, Orders, Fills, Intent Execution).
+*   **Phase 6 (Completed)**: Implement Active Market Intelligence (`/allmarkets`, `/marketstatus`, active market cache scheduler).
+*   **Phase 7 (Under Evaluation)**: Build direct account monitoring and trading actions (Balances, Orders, Fills, Intent Execution).
 
 ---
 

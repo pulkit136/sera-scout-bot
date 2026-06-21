@@ -1,6 +1,24 @@
 import { Bot } from "grammy";
-import { getMarkets } from "./sera-api.js";
+import { getMarkets, getQuote } from "./sera-api.js";
 import { getKnownMarkets, setKnownMarkets, getSubscribedChats, setNewestMarket } from "./discovery-storage.js";
+
+async function testMarketLiquidity(m: any): Promise<boolean> {
+  try {
+    const payload = {
+      from_token: m.base_address,
+      to_token: m.quote_address,
+      from_amount: m.min_ask_amount_raw,
+      owner_address: "0x0000000000000000000000000000000000000000",
+      recipient: "0x0000000000000000000000000000000000000000",
+      expiration: Math.floor(Date.now() / 1000) + 120,
+      gas_mode: "receive_less" as const
+    };
+    const quote = await getQuote(payload);
+    return !!quote && !!quote.route_params.minOutputAmount;
+  } catch (e) {
+    return false;
+  }
+}
 
 let discoveryInterval: NodeJS.Timeout | null = null;
 
@@ -32,9 +50,14 @@ async function checkNewMarkets(bot: Bot) {
       const utcTime = new Date().toISOString().replace("T", " ").substring(0, 19) + " UTC";
 
       for (const nm of newMarkets) {
-        const text = `🆕 *New Sera Market Listed*\n\n` +
+        const hasLiquidity = await testMarketLiquidity(nm);
+        const wording = hasLiquidity ? "New Market Listed" : "New Market Registered";
+        
+        const text = `🆕 *${wording}*\n\n` +
           `*Pair:*\n` +
           `${nm.base_symbol} / ${nm.quote_symbol}\n\n` +
+          `*Liquidity Status:*\n` +
+          `${hasLiquidity ? "🟢 Active Liquidity Detected" : "🔴 No Liquidity Present"}\n\n` +
           `*Discovered:*\n` +
           `${utcTime}\n\n` +
           `Use:\n` +
