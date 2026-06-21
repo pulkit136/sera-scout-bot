@@ -112,11 +112,13 @@ To protect the bot from REST API rate limiting and network latency overhead, the
 
 ## Screenshots
 
-*   **Home Menu**: *[Placeholder: Main screen navigation and dashboard]*
-*   **Quote Flow**: *[Placeholder: Quote preset keyboard, fallback output, and gas warning]*
-*   **Market Explorer**: *[Placeholder: Paginated active market list and details]*
-*   **Alerts**: *[Placeholder: Active price alert configuration and notifications]*
-*   **Discover**: *[Placeholder: Dominant tokens and newest registry listings]*
+*   **Home Menu**: <img width="335" height="205" alt="image" src="https://github.com/user-attachments/assets/e556530d-6a28-4421-b07f-ad11a6263116" />
+
+*   **Quote Flow**: <img width="332" height="213" alt="image" src="https://github.com/user-attachments/assets/0ce8f963-31d9-470d-a673-35a417a07a92" />
+
+*   **Market Explorer**: <img width="299" height="263" alt="image" src="https://github.com/user-attachments/assets/5c282352-df7e-4405-851c-0f066ac3213a" />
+
+*   **Alerts**: <img width="254" height="142" alt="image" src="https://github.com/user-attachments/assets/382410be-cb3a-4e49-bd5f-653de4bd308a" />
 
 ---
 
