@@ -3,6 +3,8 @@ import { startAlphaScheduler, getLatestAlphaBoard } from "./services/scheduler.j
 import { getTopLiquidityMarkets, getMarketScan } from "./services/scout.js";
 import { getTokens, getQuote, getCachedMarkets } from "./services/sera-api.js";
 import { parseUnits, formatUnits } from "./utils/decimal.js";
+import { addAlert, listAlertsForChat, removeAlert } from "./services/alert-storage.js";
+import { startAlertScheduler } from "./services/alert-scheduler.js";
 
 // Load Bot Token from environment variable
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -31,6 +33,9 @@ Market companion bot for Sera Protocol.
 
 /quote <from> <to> <amount> - Get a swap price quote
 /markets - Discover available Sera trading pairs
+/alert <from> <to> <above|below> <rate> - Create a quote rate alert
+/myalerts - List your active alerts
+/removealert <id> - Remove an active alert
 /alpha - View tightest spread markets (legacy Sepolia)
 /liquidity - View top liquidity markets (legacy Sepolia)
 /scan <token> - Scan markets for a specific token (legacy Sepolia)
@@ -48,7 +53,7 @@ Telegram companion bot for the Sera Protocol, focused on market discovery, quote
 
 • *Quote Generation*: Fetch real-time, slippage-protected swap quotes directly from Sera Mainnet.
 • *Market Discovery*: Discover available trading pairs on Sera Mainnet using /markets.
-• *Price Alerts*: Get real-time notifications for market movements (Planned).`;
+• *Price Alerts*: Get real-time notifications for market movements using /alert.`;
   await ctx.reply(text, { parse_mode: "Markdown" });
 });
 
@@ -293,6 +298,119 @@ bot.command("markets", async (ctx) => {
   }
 });
 
+// /alert command
+bot.command("alert", async (ctx) => {
+  try {
+    const args = ctx.match?.trim().split(/\s+/);
+    if (!args || args.length !== 4) {
+      await ctx.reply("⚠️ Usage: \`/alert <from_token> <to_token> <above|below> <rate>\`\nExample: \`/alert EURS USDT above 1.08\`", { parse_mode: "Markdown" });
+      return;
+    }
+
+    const [fromSym, toSym, conditionInput, rateStr] = args;
+    const condition = conditionInput.toLowerCase();
+    if (condition !== "above" && condition !== "below") {
+      await ctx.reply("❌ Invalid condition. Must be either *above* or *below*.", { parse_mode: "Markdown" });
+      return;
+    }
+
+    const targetRate = Number(rateStr);
+    if (isNaN(targetRate) || targetRate <= 0) {
+      await ctx.reply(`❌ Invalid target rate *${rateStr}*. Must be a positive number.`, { parse_mode: "Markdown" });
+      return;
+    }
+
+    await ctx.replyWithChatAction("typing");
+
+    // Fetch token configuration
+    const tokens = await getTokens();
+    const fromToken = tokens.find(t => t.symbol.toUpperCase() === fromSym.toUpperCase());
+    const toToken = tokens.find(t => t.symbol.toUpperCase() === toSym.toUpperCase());
+
+    if (!fromToken) {
+      await ctx.reply(`❌ Unsupported source token symbol: *${fromSym}*`, { parse_mode: "Markdown" });
+      return;
+    }
+    if (!toToken) {
+      await ctx.reply(`❌ Unsupported destination token symbol: *${toSym}*`, { parse_mode: "Markdown" });
+      return;
+    }
+
+    // Add alert to persistent storage
+    const alert = addAlert({
+      telegram_chat_id: ctx.chat.id,
+      from_token: fromToken.symbol,
+      from_address: fromToken.address,
+      from_decimals: fromToken.decimals,
+      to_token: toToken.symbol,
+      to_address: toToken.address,
+      to_decimals: toToken.decimals,
+      condition: condition as "above" | "below",
+      target_rate: targetRate
+    });
+
+    const triggerLabel = condition === "above" ? "Above" : "Below";
+    await ctx.reply(`✅ *Alert Created Successfully*\n\n` +
+      `• *Pair:* ${alert.from_token} → ${alert.to_token}\n` +
+      `• *Trigger:* ${triggerLabel} ${alert.target_rate.toFixed(4)}\n` +
+      `• *Alert ID:* ${alert.id}`, { parse_mode: "Markdown" });
+
+  } catch (error) {
+    console.error("Bot /alert error:", error);
+    await ctx.reply("⚠️ Failed to create alert. Please try again.");
+  }
+});
+
+// /myalerts command
+bot.command("myalerts", async (ctx) => {
+  try {
+    const alerts = listAlertsForChat(ctx.chat.id);
+    if (alerts.length === 0) {
+      await ctx.reply("ℹ️ You have no active quote alerts.");
+      return;
+    }
+
+    let text = `🔔 *Active Quote Alerts*\n\n`;
+    for (const a of alerts) {
+      const condLabel = a.condition === "above" ? "Above" : "Below";
+      text += `• *ID ${a.id}:* ${a.from_token} → ${a.to_token} when ${condLabel} ${a.target_rate.toFixed(4)}\n`;
+    }
+    text += `\nTo remove an alert, use:\n\`/removealert <id>\``;
+    await ctx.reply(text, { parse_mode: "Markdown" });
+  } catch (error) {
+    console.error("Bot /myalerts error:", error);
+    await ctx.reply("⚠️ Failed to load alerts.");
+  }
+});
+
+// /removealert command
+bot.command("removealert", async (ctx) => {
+  try {
+    const alertId = ctx.match?.trim();
+    if (!alertId) {
+      await ctx.reply("⚠️ Usage: \`/removealert <id>\`\nExample: \`/removealert 123\`", { parse_mode: "Markdown" });
+      return;
+    }
+
+    const userAlerts = listAlertsForChat(ctx.chat.id);
+    const exists = userAlerts.some(a => a.id === alertId);
+    if (!exists) {
+      await ctx.reply(`❌ Alert ID *${alertId}* not found under your active alerts.`, { parse_mode: "Markdown" });
+      return;
+    }
+
+    const success = removeAlert(alertId);
+    if (success) {
+      await ctx.reply(`✅ Alert ID *${alertId}* has been removed.`, { parse_mode: "Markdown" });
+    } else {
+      await ctx.reply(`❌ Failed to remove alert ID *${alertId}*.`, { parse_mode: "Markdown" });
+    }
+  } catch (error) {
+    console.error("Bot /removealert error:", error);
+    await ctx.reply("⚠️ Failed to remove alert.");
+  }
+});
+
 // Generic catch-all for errors to ensure long polling doesn't crash the bot process
 bot.catch((err) => {
   console.error("Grammy Bot error boundary caught an error:", err);
@@ -315,6 +433,10 @@ async function start() {
 
   // Start Grammy bot via long polling
   console.log("🚀 Bot is starting long polling...");
+  
+  // Start Quote Alert Scheduler
+  startAlertScheduler(bot);
+  
   await bot.start();
 }
 
