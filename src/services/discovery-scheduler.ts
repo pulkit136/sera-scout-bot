@@ -1,6 +1,6 @@
 import { Bot } from "grammy";
 import { getMarkets } from "./sera-api.js";
-import { getKnownMarkets, setKnownMarkets, getSubscribedChats } from "./discovery-storage.js";
+import { getKnownMarkets, setKnownMarkets, getSubscribedChats, setNewestMarket } from "./discovery-storage.js";
 
 let discoveryInterval: NodeJS.Timeout | null = null;
 
@@ -14,6 +14,10 @@ async function checkNewMarkets(bot: Bot) {
     if (knownSymbols.length === 0) {
       // First run: save current markets list to storage without sending notifications
       setKnownMarkets(currentSymbols);
+      if (currentMarkets.length > 0) {
+        const lastMarket = currentMarkets[currentMarkets.length - 1];
+        setNewestMarket(`${lastMarket.base_symbol} / ${lastMarket.quote_symbol}`, "Initial Scan");
+      }
       console.log(`[Discovery Scheduler] First-run initialized. Saved ${currentSymbols.length} known markets.`);
       return;
     }
@@ -43,6 +47,10 @@ async function checkNewMarkets(bot: Bot) {
           });
         }
       }
+
+      // Update newest market
+      const newest = newMarkets[newMarkets.length - 1];
+      setNewestMarket(`${newest.base_symbol} / ${newest.quote_symbol}`, utcTime);
 
       // Update known markets in storage
       const updatedKnown = Array.from(new Set([...knownSymbols, ...currentSymbols]));

@@ -7,6 +7,8 @@ const STORAGE_PATH = path.join(DATA_DIR, "discovery.json");
 interface DiscoveryData {
   subscribed_chats: number[];
   known_markets: string[];
+  newest_market?: string;
+  newest_market_time?: string;
 }
 
 let discoveryData: DiscoveryData = {
@@ -75,5 +77,19 @@ export function getKnownMarkets(): string[] {
 
 export function setKnownMarkets(markets: string[]): void {
   discoveryData.known_markets = [...markets];
+  saveStorage();
+}
+
+export function getNewestMarket(): { symbol: string; discoveredAt: string } | null {
+  if (!discoveryData.newest_market) return null;
+  return {
+    symbol: discoveryData.newest_market,
+    discoveredAt: discoveryData.newest_market_time || ""
+  };
+}
+
+export function setNewestMarket(symbol: string, time: string): void {
+  discoveryData.newest_market = symbol;
+  discoveryData.newest_market_time = time;
   saveStorage();
 }

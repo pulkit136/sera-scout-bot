@@ -25,6 +25,10 @@ Sera Scout is designed to be the ultimate mobile companion for Sera Protocol use
 | `/stats` | View catalog statistics | **Live** | Mainnet REST API |
 | `/token` | Explore token details & market count | **Live** | Mainnet REST API |
 | `/trending` | Rank tokens by market connection | **Live** | Mainnet REST API |
+| `/discover` | Surfaces protocol insights & newest listings | **Live** | Mainnet REST API |
+| `/pair` | Lookup market details for a pair | **Live** | Mainnet REST API |
+| `/compare` | Compare token dominance & overlapping routes | **Live** | Mainnet REST API |
+| `/digest` | Manage daily intelligence summary reports | **Live** | Mainnet REST API |
 | `/alpha` | Tightest spread ranking table | *Legacy* | Sepolia Subgraph (GraphQL) |
 | `/liquidity` | Leaderboard of deep liquidity pools | *Legacy* | Sepolia Subgraph (GraphQL) |
 | `/scan` | Market spread and fee metrics lookup | *Legacy* | Sepolia Subgraph (GraphQL) |
@@ -83,6 +87,10 @@ graph TD
 *   `/stats` — Displays protocol market and token statistics.
 *   `/token <symbol>` — Queries details and market connections for a specific token (e.g. `/token USDC`).
 *   `/trending` — Displays the most connected tokens based on active market counts.
+*   `/discover` — Surfaces protocol insights, dominant tokens, and new listings.
+*   `/pair <BASE> <QUOTE>` — Looks up details and related commands for a trading pair (e.g. `/pair USDC USDT`).
+*   `/compare <TOKEN1> <TOKEN2>` — Compares connectivity, relative dominance multiplier, and shared trading routes.
+*   `/digest <on\|off>` — Activates or deactivates daily scheduled summaries.
 *   `/alpha` — Retrieves top 10 tightest spread pairs (*Legacy Sepolia*).
 *   `/liquidity` — Ranks top 10 pairs by total liquidity volumes (*Legacy Sepolia*).
 *   `/scan <TOKEN>` — Displays spot price and fee metrics (*Legacy Sepolia*).
@@ -95,7 +103,8 @@ graph TD
 *   **Phase 2 (Completed)**: Add market discovery features, including active trading pairs listing via `/markets`.
 *   **Phase 3 (Completed)**: Build notification and alerts engine (`/alert`) allowing users to monitor price thresholds.
 *   **Phase 4 (Completed)**: Implement advanced market monitoring & statistics (`/watchnewmarkets`, `/stats`, `/token`, `/trending`).
-*   **Phase 5 (Under Evaluation)**: Build direct account monitoring and trading actions (Balances, Orders, Fills, Intent Execution).
+*   **Phase 5 (Completed)**: Implement Sera Intelligence Layer (`/discover`, `/pair`, `/compare`, `/digest` schedulers).
+*   **Phase 6 (Under Evaluation)**: Build direct account monitoring and trading actions (Balances, Orders, Fills, Intent Execution).
 
 ---
 

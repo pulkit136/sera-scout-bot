@@ -5,8 +5,10 @@ import { getTokens, getQuote, getCachedMarkets, getMarketsCacheTimestamp } from 
 import { parseUnits, formatUnits } from "./utils/decimal.js";
 import { addAlert, listAlertsForChat, removeAlert } from "./services/alert-storage.js";
 import { startAlertScheduler } from "./services/alert-scheduler.js";
-import { subscribeChat, unsubscribeChat } from "./services/discovery-storage.js";
+import { subscribeChat, unsubscribeChat, getNewestMarket } from "./services/discovery-storage.js";
 import { startDiscoveryScheduler } from "./services/discovery-scheduler.js";
+import { subscribeDigest, unsubscribeDigest } from "./services/digest-storage.js";
+import { startDigestScheduler } from "./services/digest-scheduler.js";
 
 // Load Bot Token from environment variable
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -39,12 +41,13 @@ const userSessions = new Map<number, UserSession>();
 function getMainMenu() {
   const text = `👋 *Welcome to Sera Scout*\n\n` +
     `Sera Scout is your interactive companion for the Sera Protocol.\n` +
-    `Use the menu below to navigate markets, request quotes, configure price alerts, and view statistics without remembering commands.`;
+    `Use the menu below to navigate markets, price discovery, compare tokens, and configure alerts.`;
   const keyboard = new InlineKeyboard()
     .text("💸 Swap Quote", "menu_quote").row()
     .text("📈 Browse Markets", "mkt:1").row()
-    .text("🔥 Trending", "trd:1")
-    .text("📊 Stats", "stats").row()
+    .text("💡 Discover Insights", "discover")
+    .text("🔥 Trending", "trd:1").row()
+    .text("📊 Stats", "stats")
     .text("🔔 My Alerts", "alerts:1");
   return { text, keyboard };
 }
@@ -300,7 +303,7 @@ async function getStatsView() {
   const eursCount = quoteCounts["EURS"] || 0;
 
   let text = `📊 *Sera Market Stats*\n\n` +
-    `• Total Markets: ${totalMarkets}\n` +
+    `• Total Active Markets: ${totalMarkets}\n` +
     `• Total Tokens: ${totalTokens}\n` +
     `• Last Refresh: ${lastRefreshText}\n\n` +
     `*Most Common Quote Tokens:*\n\n` +
@@ -310,6 +313,37 @@ async function getStatsView() {
 
   const keyboard = new InlineKeyboard().text("🏠 Home", "home");
 
+  return { text, keyboard };
+}
+
+async function getDiscoverView() {
+  const markets = await getCachedMarkets();
+  const totalMarkets = markets.length;
+
+  const counts: Record<string, { symbol: string; count: number }> = {};
+  for (const m of markets) {
+    counts[m.base_address.toLowerCase()] = counts[m.base_address.toLowerCase()] || { symbol: m.base_symbol, count: 0 };
+    counts[m.base_address.toLowerCase()].count++;
+
+    counts[m.quote_address.toLowerCase()] = counts[m.quote_address.toLowerCase()] || { symbol: m.quote_symbol, count: 0 };
+    counts[m.quote_address.toLowerCase()].count++;
+  }
+  const sorted = Object.values(counts).sort((a, b) => b.count - a.count);
+  const topToken = sorted[0];
+
+  const newest = getNewestMarket();
+  const newestMarketText = newest ? `${newest.symbol} (${newest.discoveredAt})` : "None recently";
+
+  let text = `💡 *Sera Protocol Discovery Insights*\n\n` +
+    `• *Total Active Markets:* ${totalMarkets}\n` +
+    `• *Most Connected Token:* *${topToken?.symbol || "N/A"}* (appears in ${topToken?.count || 0} markets)\n` +
+    `• *Newest Listed Market:* ${newestMarketText}\n\n` +
+    `*Suggested Commands:*\n` +
+    `• \`/pair USDC USDT\` - Look up token pair details\n` +
+    `• \`/compare USDC EURS\` - Compare token dominance\n` +
+    `• \`/trending\` - View most active tokens`;
+
+  const keyboard = new InlineKeyboard().text("🏠 Home", "home");
   return { text, keyboard };
 }
 
@@ -413,13 +447,202 @@ bot.command("start", async (ctx) => {
 // /about command
 bot.command("about", async (ctx) => {
   const text = `*Sera Scout*\n\n` +
-    `Telegram companion bot for the Sera Protocol, focused on market discovery, quote generation, and future trading tools.\n\n` +
+    `Telegram companion bot for the Sera Protocol, focused on market discovery, quote generation, and price intelligence.\n\n` +
     `• *Quote Generation*: Fetch real-time, slippage-protected swap quotes directly from Sera Mainnet.\n` +
-    `• *Market Discovery*: Discover available trading pairs on Sera Mainnet using /markets and trending tokens via /trending.\n` +
-    `• *Market Watcher*: Get instant notifications when new pairs are listed via /watchnewmarkets.\n` +
-    `• *Price Alerts*: Get real-time notifications for market movements using /alert.`;
+    `• *Market Discovery*: Discover trading pairs using /markets and trending tokens via /trending.\n` +
+    `• *Intelligence Layer*: Gain insights on token connectivity and routes via /discover, /pair, and /compare.\n` +
+    `• *Price Alerts & Digests*: Setup real-time rate alerts via /alert and daily digest summaries via /digest.`;
   const keyboard = new InlineKeyboard().text("🏠 Home", "home");
   await ctx.reply(text, { parse_mode: "Markdown", reply_markup: keyboard });
+});
+
+// /discover command
+bot.command("discover", async (ctx) => {
+  try {
+    await ctx.replyWithChatAction("typing").catch(() => {});
+    const { text, keyboard } = await getDiscoverView();
+    await ctx.reply(text, { parse_mode: "Markdown", reply_markup: keyboard });
+  } catch (error) {
+    console.error("Bot /discover command error:", error);
+    await ctx.reply("⚠️ Failed to load protocol discovery insights. Please try again later.");
+  }
+});
+
+// /pair <base> <quote> command
+bot.command("pair", async (ctx) => {
+  try {
+    const args = ctx.match?.trim().split(/\s+/);
+    if (!args || args.length !== 2) {
+      await ctx.reply("⚠️ Usage: `/pair <base_symbol> <quote_symbol>`\nExample: `/pair USDC USDT`", { parse_mode: "Markdown" });
+      return;
+    }
+
+    const [baseSym, quoteSym] = args.map(a => a.toUpperCase());
+    await ctx.replyWithChatAction("typing").catch(() => {});
+
+    const markets = await getCachedMarkets();
+    const tokens = await getTokens();
+
+    const directMarket = markets.find(m => 
+      (m.base_symbol.toUpperCase() === baseSym && m.quote_symbol.toUpperCase() === quoteSym) ||
+      (m.base_symbol.toUpperCase() === quoteSym && m.quote_symbol.toUpperCase() === baseSym)
+    );
+
+    const baseToken = tokens.find(t => t.symbol.toUpperCase() === baseSym);
+    const quoteToken = tokens.find(t => t.symbol.toUpperCase() === quoteSym);
+
+    let text = `🔍 *Sera Pair Lookup: ${baseSym} / ${quoteSym}*\n\n`;
+
+    if (directMarket) {
+      text += `✅ *Market Status:* Direct trading pair exists!\n` +
+        `• *Ticker:* ${directMarket.symbol}\n` +
+        `• *Base Decimals:* ${directMarket.base_decimals}\n` +
+        `• *Quote Decimals:* ${directMarket.quote_decimals}\n` +
+        `• *Tick Precision:* ${directMarket.tick_precision}\n` +
+        `• *Quantity Precision:* ${directMarket.quantity_precision}\n\n`;
+    } else {
+      text += `❌ *Market Status:* Direct trading pair does not exist.\n\n`;
+    }
+
+    if (baseToken) {
+      text += `*${baseSym} Token Info:*\n` +
+        `• *Decimals:* ${baseToken.decimals}\n` +
+        `• *Currency:* ${baseToken.currency}\n` +
+        `• *Min Trade:* ${baseToken.min_trade_amount}\n\n`;
+    }
+
+    if (quoteToken) {
+      text += `*${quoteSym} Token Info:*\n` +
+        `• *Decimals:* ${quoteToken.decimals}\n` +
+        `• *Currency:* ${quoteToken.currency}\n` +
+        `• *Min Trade:* ${quoteToken.min_trade_amount}\n\n`;
+    }
+
+    text += `*Suggested Commands:*\n`;
+    if (directMarket) {
+      text += `• \`/quote ${baseSym} ${quoteSym} 100\` - Get instant quote\n` +
+        `• \`/alert ${baseSym} ${quoteSym} above 1.0\` - Setup rate alert\n`;
+    } else {
+      text += `• \`/compare ${baseSym} ${quoteSym}\` - Compare both tokens\n`;
+    }
+
+    const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+    await ctx.reply(text, { parse_mode: "Markdown", reply_markup: keyboard });
+
+  } catch (error) {
+    console.error("Bot /pair command error:", error);
+    await ctx.reply("⚠️ Failed to look up pair information.");
+  }
+});
+
+// /compare <token1> <token2> command
+bot.command("compare", async (ctx) => {
+  try {
+    const args = ctx.match?.trim().split(/\s+/);
+    if (!args || args.length !== 2) {
+      await ctx.reply("⚠️ Usage: `/compare <token1> <token2>`\nExample: `/compare USDC EURS`", { parse_mode: "Markdown" });
+      return;
+    }
+
+    const [t1Sym, t2Sym] = args.map(a => a.toUpperCase());
+    await ctx.replyWithChatAction("typing").catch(() => {});
+
+    const markets = await getCachedMarkets();
+    const tokens = await getTokens();
+
+    const t1Info = tokens.find(t => t.symbol.toUpperCase() === t1Sym);
+    const t2Info = tokens.find(t => t.symbol.toUpperCase() === t2Sym);
+
+    if (!t1Info || !t2Info) {
+      await ctx.reply(`❌ Could not compare. Both tokens must be in registry. Supporting symbols: ${tokens.map(t => t.symbol).join(", ")}`);
+      return;
+    }
+
+    const t1Markets = markets.filter(m => 
+      m.base_address.toLowerCase() === t1Info.address.toLowerCase() ||
+      m.quote_address.toLowerCase() === t1Info.address.toLowerCase()
+    );
+    const t2Markets = markets.filter(m => 
+      m.base_address.toLowerCase() === t2Info.address.toLowerCase() ||
+      m.quote_address.toLowerCase() === t2Info.address.toLowerCase()
+    );
+
+    const counts: Record<string, number> = {};
+    for (const m of markets) {
+      counts[m.base_address.toLowerCase()] = (counts[m.base_address.toLowerCase()] || 0) + 1;
+      counts[m.quote_address.toLowerCase()] = (counts[m.quote_address.toLowerCase()] || 0) + 1;
+    }
+    const sortedAddrs = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+    const t1Rank = sortedAddrs.indexOf(t1Info.address.toLowerCase()) + 1;
+    const t2Rank = sortedAddrs.indexOf(t2Info.address.toLowerCase()) + 1;
+
+    const t1Partners = t1Markets.map(m => 
+      m.base_address.toLowerCase() === t1Info.address.toLowerCase() ? m.quote_symbol : m.base_symbol
+    );
+    const t2Partners = t2Markets.map(m => 
+      m.base_address.toLowerCase() === t2Info.address.toLowerCase() ? m.quote_symbol : m.base_symbol
+    );
+    const commonPartners = t1Partners.filter(p => t2Partners.includes(p));
+
+    let text = `📊 *Sera Token Comparison: ${t1Sym} vs ${t2Sym}*\n\n` +
+      `*1. Market Dominance:*\n` +
+      `• *${t1Sym}*: ${t1Markets.length} markets (Rank #${t1Rank || "N/A"})\n` +
+      `• *${t2Sym}*: ${t2Markets.length} markets (Rank #${t2Rank || "N/A"})\n\n` +
+      `*2. Relative Connectivity:*\n`;
+
+    if (t1Markets.length > t2Markets.length) {
+      const multiplier = (t1Markets.length / (t2Markets.length || 1)).toFixed(1);
+      text += `• ${t1Sym} is active in *${multiplier}x* more markets than ${t2Sym}.\n\n`;
+    } else if (t2Markets.length > t1Markets.length) {
+      const multiplier = (t2Markets.length / (t1Markets.length || 1)).toFixed(1);
+      text += `• ${t2Sym} is active in *${multiplier}x* more markets than ${t1Sym}.\n\n`;
+    } else {
+      text += `• Both tokens have equal market connectivity.\n\n`;
+    }
+
+    text += `*3. Common Quote/Route Targets:*\n` +
+      `• Shared Partners: ${commonPartners.length > 0 ? commonPartners.join(", ") : "None"}\n\n` +
+      `💡 _Use /pair to analyze specific market characteristics of a trading pair._`;
+
+    const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+    await ctx.reply(text, { parse_mode: "Markdown", reply_markup: keyboard });
+
+  } catch (error) {
+    console.error("Bot /compare command error:", error);
+    await ctx.reply("⚠️ Failed to compare tokens.");
+  }
+});
+
+// /digest <on|off> command
+bot.command("digest", async (ctx) => {
+  try {
+    const arg = ctx.match?.trim().toLowerCase();
+    if (arg !== "on" && arg !== "off") {
+      await ctx.reply("⚠️ Usage: \`/digest <on|off>\`\nExample: \`/digest on\`", { parse_mode: "Markdown" });
+      return;
+    }
+
+    const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+
+    if (arg === "on") {
+      const success = subscribeDigest(ctx.chat.id);
+      if (success) {
+        await ctx.reply("🔔 *Daily Intelligence Digest Activated*\n\nYou will receive a summary of protocol activities and token insights every day around 9 AM UTC.", { parse_mode: "Markdown", reply_markup: keyboard });
+      } else {
+        await ctx.reply("ℹ️ You are already subscribed to the daily digest.", { parse_mode: "Markdown", reply_markup: keyboard });
+      }
+    } else {
+      const success = unsubscribeDigest(ctx.chat.id);
+      if (success) {
+        await ctx.reply("🔕 *Daily Intelligence Digest Deactivated*\n\nYou will no longer receive daily summaries.", { parse_mode: "Markdown", reply_markup: keyboard });
+      } else {
+        await ctx.reply("ℹ️ You are not subscribed to the daily digest.", { parse_mode: "Markdown", reply_markup: keyboard });
+      }
+    }
+  } catch (error) {
+    console.error("Bot /digest error:", error);
+    await ctx.reply("⚠️ Failed to update daily digest subscription.");
+  }
 });
 
 // /alpha command
@@ -872,6 +1095,9 @@ bot.on("callback_query:data", async (ctx) => {
     } else if (action === "stats") {
       const { text, keyboard } = await getStatsView();
       await editOrReply(ctx, text, keyboard);
+    } else if (action === "discover") {
+      const { text, keyboard } = await getDiscoverView();
+      await editOrReply(ctx, text, keyboard);
     }
   } catch (error) {
     console.error("Callback query error:", error);
@@ -1027,6 +1253,9 @@ async function start() {
 
   // Start Market Discovery Scheduler (30m)
   startDiscoveryScheduler(bot);
+  
+  // Start Daily Digest Scheduler (hourly check)
+  startDigestScheduler(bot);
   
   await bot.start();
 }
