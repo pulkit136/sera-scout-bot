@@ -9,9 +9,19 @@ interface ActiveMarketsData {
   active_symbols: string[];
 }
 
+// Pre-populate with the 6 known active stablecoin pairs using the slash symbol format matching the API
+const DEFAULT_ACTIVE_SYMBOLS = [
+  "EUR0/XSGD",
+  "MYRT/XSGD",
+  "MYRT/USDT",
+  "XSGD/USDC",
+  "XSGD/USDT",
+  "USDC/USDT"
+];
+
 let activeMarketsData: ActiveMarketsData = {
-  last_scan_time: "",
-  active_symbols: []
+  last_scan_time: new Date().toISOString(),
+  active_symbols: [...DEFAULT_ACTIVE_SYMBOLS]
 };
 
 // Initialize storage
@@ -23,12 +33,16 @@ function initStorage() {
     if (fs.existsSync(STORAGE_PATH)) {
       const raw = fs.readFileSync(STORAGE_PATH, "utf-8");
       activeMarketsData = JSON.parse(raw);
-      if (!activeMarketsData.active_symbols) activeMarketsData.active_symbols = [];
+      // Ensure active_symbols is present and non-empty, otherwise default it
+      if (!activeMarketsData.active_symbols || activeMarketsData.active_symbols.length === 0) {
+        activeMarketsData.active_symbols = [...DEFAULT_ACTIVE_SYMBOLS];
+      }
     } else {
       saveStorage();
     }
   } catch (error) {
     console.error("[Active Market Storage] Failed to initialize storage:", error);
+    activeMarketsData.active_symbols = [...DEFAULT_ACTIVE_SYMBOLS];
   }
 }
 
@@ -45,6 +59,10 @@ function saveStorage() {
 initStorage();
 
 export function getActiveSymbols(): string[] {
+  // If cache is empty or unavailable, return fallback active markets directly
+  if (!activeMarketsData.active_symbols || activeMarketsData.active_symbols.length === 0) {
+    return [...DEFAULT_ACTIVE_SYMBOLS];
+  }
   return [...activeMarketsData.active_symbols];
 }
 
