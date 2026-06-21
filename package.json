@@ -5,6 +5,7 @@
   "main": "src/test.ts",
   "type": "module",
 "scripts": {
+  "build": "tsc",
   "start": "tsx src/bot.ts",
   "bot": "tsx src/bot.ts",
   "alpha": "tsx src/test-alpha.ts",

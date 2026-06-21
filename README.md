@@ -1,166 +1,141 @@
-# Sera Scout
+# Sera Scout (V2.5.3)
 
-[![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Grammy](https://img.shields.io/badge/GrammyJS-F87171?style=for-the-badge&logo=telegram&logoColor=white)](https://grammy.dev/)
-[![Node.js](https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+Sera Scout is a Telegram-native market intelligence and trading assistant for the **Sera Protocol** on Ethereum Mainnet. It provides intent-based price discovery, real-time liquidity stats, price alerts, and slippage-protected swap quotes.
 
-Sera Scout is a Telegram companion bot for the **Sera Protocol** on Ethereum Mainnet. It focuses on market discovery, real-time quote generation, price/liquidity alerts, and future intent-based trading utilities.
-
----
-
-## Product Vision
-
-Sera Scout is designed to be the ultimate mobile companion for Sera Protocol users. Because Sera Mainnet utilizes a blind order book where order depth is not publicly exposed, traditional open analytics (such as spread boards or market-depth maps) are replaced by intent-based tools, quote engines, and real-time alerts.
-
----
-
-## Feature Matrix
-
-| Feature | Description | Status | API Source |
-| :--- | :--- | :--- | :--- |
-| `/quote` | Fetch slippage-protected swap quotes | **Live** | Mainnet REST API |
-| `/markets` | List active trading markets and pairs | **Live** | Mainnet REST API |
-| `/allmarkets` | List all registered markets (registry) | **Live** | Mainnet REST API |
-| `/marketstatus` | Stats on total registry vs. active count | **Live** | Mainnet REST API |
-| `/alert` | Price alert triggers and notifications | **Live** | Mainnet REST API |
-| `/watchnewmarkets` | Subscribe to new listing notifications | **Live** | Mainnet REST API |
-| `/stats` | View catalog statistics | **Live** | Mainnet REST API |
-| `/token` | Explore token details & market count | **Live** | Mainnet REST API |
-| `/trending` | Rank tokens by market connection | **Live** | Mainnet REST API |
-| `/discover` | Surfaces protocol insights & newest listings | **Live** | Mainnet REST API |
-| `/pair` | Lookup market details for a pair | **Live** | Mainnet REST API |
-| `/compare` | Compare token dominance & overlapping routes | **Live** | Mainnet REST API |
-| `/digest` | Manage daily intelligence summary reports | **Live** | Mainnet REST API |
-| `/alpha` | Tightest spread ranking table | *Legacy* | Sepolia Subgraph (GraphQL) |
-| `/liquidity` | Leaderboard of deep liquidity pools | *Legacy* | Sepolia Subgraph (GraphQL) |
-| `/scan` | Market spread and fee metrics lookup | *Legacy* | Sepolia Subgraph (GraphQL) |
+Sera Scout is powered directly by the official **Sera Mainnet REST API**, migrating away from legacy Sepolia testnet subgraph workflows to deliver production-grade mainnet data.
 
 ---
 
 ## Architecture Flow
 
-Sera Scout operates on a robust API client pipeline directly interfacing with the Sera Protocol Mainnet endpoints.
+Sera Scout implements a lightweight, high-performance integration flow directly interfacing with the Sera Protocol Mainnet.
 
-### Current Architecture: Read-Only Quote Engine
 ```mermaid
 graph TD
-    User([Telegram User])
-    Bot[Grammy Bot Core]
-    Engine[Sera Scout Engine]
-    API[Sera REST API]
-    Mainnet[Sera Mainnet Protocol]
+    TelegramUser([Telegram User])
+    GrammyBot[Grammy Bot Core]
+    ScoutEngine[Sera Scout Engine]
+    SeraAPI[Sera REST API]
+    Mainnet[Sera Protocol Mainnet]
     
-    User <-->|Commands: /quote, /about| Bot
-    Bot <-->|Execute Queries & Logic| Engine
-    Engine <-->|REST Requests| API
-    API <-->|State & Quote Engine| Mainnet
+    TelegramUser <-->|Commands & Callbacks| GrammyBot
+    GrammyBot <-->|Execute Views & Logic| ScoutEngine
+    ScoutEngine <-->|REST Queries| SeraAPI
+    SeraAPI <-->|State & Quotes| Mainnet
 ```
 
-### Future Architecture: Intent Signing & Vault Trading
-```mermaid
-graph TD
-    User([Telegram User])
-    Bot[Grammy Bot Core]
-    Engine[Sera Scout Engine]
-    API[Sera REST API]
-    Vault[Sera Vault / Contracts]
+---
 
-    User -->|Initiates /quote| Bot
-    Bot -->|Queries Swap Quote| Engine
-    Engine -->|POST /swap/quote| API
-    API -->|Generates EIP-712 Intent| Engine
-    Engine -->|Presents signing data| Bot
-    Bot -->|Returns Permit/Route params| User
-    User -->|Signs & Submits Tx| Vault
-```
+## Core Features
+
+*   **Interactive Telegram UI** — Navigate through full-screen views, list pagination, and alert configurations using inline keyboards.
+*   **Live Swap Quotes** — Fetch real-time, slippage-protected swap quotes directly from the mainnet REST API.
+*   **Active Market Explorer** — Focus on high-liquidity active trading markets using `/markets`.
+*   **Full Market Registry** — Browse and filter the complete catalog of 780+ registered trading pairs using `/allmarkets`.
+*   **Price Alerts** — Setup automated price rate notifications (`/alert`) triggered by background checking.
+*   **Trending Tokens** — View and browse tokens ranked by active market connectivity.
+*   **Discover Insights** — Surface protocol-wide connectivity rankings and the newest listed markets.
+*   **Stats Dashboard** — Monitor active vs. registered catalog sizes and quote asset distributions.
+*   **Daily Digest** — Receive automated scheduled intelligence summary reports around 9 AM UTC.
+*   **Liquidity-Aware Quote Handling** — Action buttons (`Get Quote`, `Set Alert`) are hidden on inactive markets to ensure users only see actionable links.
+*   **Smart Quote Fallback Sizing** — If a quote request fails due to `no_liquidity`, the engine automatically retries with progressively smaller sizes (`500 ➔ 100 ➔ 50 ➔ 10`) to find execution bounds.
+*   **Gas Cost Awareness** — Warns users with a clear label if estimated gas fees consume $\ge 10\%$ of their total trade value.
 
 ---
 
 ## Bot Command Reference
 
-*   `/start` — Greeting portal and command summary menu.
-*   `/about` — Details bot features and architecture.
-*   `/quote <FROM> <TO> <AMOUNT>` — Fetches a live swap quote from mainnet (e.g. `/quote USDC USDT 100`).
-*   `/markets [filter]` — Lists active trading pairs with liquidity or filters them.
-*   `/allmarkets [filter]` — Lists all registered trading pairs in the static registry.
-*   `/marketstatus` — Displays statistics on active vs inactive markets loaded from the curated registry.
-*   `/alert <FROM> <TO> <above\|below> <rate>` — Configures a price rate trigger alert (e.g. `/alert EURS USDT above 1.08`).
-*   `/myalerts` — Lists active alerts for the chat.
-*   `/removealert <id>` — Removes a specific alert by its ID.
-*   `/watchnewmarkets <on\|off>` — Subscribes or unsubscribes to new market listing notifications.
-*   `/stats` — Displays protocol market and token statistics.
-*   `/token <symbol>` — Queries details and market connections for a specific token (e.g. `/token USDC`).
-*   `/trending` — Displays the most connected tokens based on active market counts.
+*   `/start` — Greeting portal and main navigation menu.
+*   `/markets [filter]` — List active trading pairs with valid executable liquidity (e.g. `/markets USDC`).
+*   `/allmarkets [filter]` — List all registered trading pairs in the full catalog (e.g. `/allmarkets XSGD`).
+*   `/quote <from> <to> <amount>` — Fetch a live swap quote from mainnet (e.g. `/quote USDC USDT 100`).
+*   `/alert <from> <to> <above|below> <rate>` — Setup a price rate trigger alert (e.g. `/alert XSGD USDC above 0.74`).
+*   `/trending` — View tokens ranked by connection frequency in active markets.
 *   `/discover` — Surfaces protocol insights, dominant tokens, and new listings.
-*   `/pair <BASE> <QUOTE>` — Looks up details and related commands for a trading pair (e.g. `/pair USDC USDT`).
-*   `/compare <TOKEN1> <TOKEN2>` — Compares connectivity, relative dominance multiplier, and shared trading routes.
-*   `/digest <on\|off>` — Activates or deactivates daily scheduled summaries.
-*   `/alpha` — Retrieves top 10 tightest spread pairs (*Legacy Sepolia*).
-*   `/liquidity` — Ranks top 10 pairs by total liquidity volumes (*Legacy Sepolia*).
-*   `/scan <TOKEN>` — Displays spot price and fee metrics (*Legacy Sepolia*).
+*   `/stats` — View general catalog, active market sizes, and quote asset distributions.
+*   `/digest <on|off>` — Turn daily intelligence digest summaries on or off.
+
+---
+
+## Core Engine Designs
+
+### 1. Active Market Registry
+To protect the bot from API rate limits and network latency overhead, the automatic background scanner was replaced with a curated registry file ([data/active_markets.json](file:///c:/Users/letsc/Downloads/sera-scout-bot/data/active_markets.json)).
+*   **Why**: Querying 780 markets sequentially consumed massive API capacity and starved user commands.
+*   **Benefits**:
+    *   **Zero Scanner Overhead**: Prevents Peak `429 Too Many Requests` API rejections.
+    *   **High Performance**: Dynamic filtering is processed instantly in memory.
+    *   **Reliability**: Curated symbols act as stable fallbacks if disk storage becomes unavailable.
+
+### 2. Sized Quote Engine
+*   **Presets**: Default presets are optimized for shallow stablecoin liquidity: `10`, `50`, `100`, `500`.
+*   **Fallback Cascades**: If a trade fails due to pool depth limits, the system tries smaller amounts from the preset sequence and suggests the highest successful amount to the user.
+*   **Gas Guard**: Displays warning indicators if gas fees represent a significant percentage of the trade value:
+    `⚠️ Gas cost is a significant portion of this trade. Consider using a larger amount for a more representative quote.`
+*   **Liquidity Classifications**:
+    *   🟢 **Deep Liquidity**: `USDC/USDT`, `XSGD/USDT`, `MYRT/USDT`
+    *   🟡 **Medium Liquidity**: `XSGD/USDC`, `MYRT/XSGD`
+    *   🔴 **Limited Liquidity**: `EUR0/XSGD`
+
+---
+
+## Project Journey
+
+*   **Phase 1 (Subgraph Exploration)**: Explored Sepolia testnet subgraph querying spread indicators, Alpha spreads, and Liquidity pool boards.
+*   **Phase 2 (Mainnet REST Migration)**: Migrated core logic to interface directly with the production-ready Mainnet REST API for slippage-protected quote execution.
+*   **Phase 3 (Interactive Companion)**: Developed the interactive Telegram user interface with active filtering, price alerts, daily digests, and smart liquidity fallbacks.
 
 ---
 
 ## Product Roadmap
 
-*   **Phase 1 (Completed)**: Implement production-grade Mainnet `/quote` command using the official REST API and decimal-safe conversions.
-*   **Phase 2 (Completed)**: Add market discovery features, including active trading pairs listing via `/markets`.
-*   **Phase 3 (Completed)**: Build notification and alerts engine (`/alert`) allowing users to monitor price thresholds.
-*   **Phase 4 (Completed)**: Implement advanced market monitoring & statistics (`/watchnewmarkets`, `/stats`, `/token`, `/trending`).
-*   **Phase 5 (Completed)**: Implement Sera Intelligence Layer (`/discover`, `/pair`, `/compare`, `/digest` schedulers).
-*   **Phase 6 (Completed)**: Implement Active Market Intelligence (`/allmarkets`, `/marketstatus`, curated active market registry).
-*   **Phase 7 (Under Evaluation)**: Build direct account monitoring and trading actions (Balances, Orders, Fills, Intent Execution).
+*   **Richer Market Intelligence** — Integrate advanced historical spread charts and token connection graphics.
+*   **Vault Integrations** — Interface with Vault contracts to enable signature-based EIP-712 intent swaps from within the chat interface.
+*   **Enhanced Token Analytics** — Track active volumes and LP reserve metrics directly from on-chain pools.
 
 ---
 
-## Setup & Local Execution
+## Screenshots
+
+*   **Home Menu** — *[Placeholder: Main screen navigation]*
+*   **Quote Flow** — *[Placeholder: Quote preset keyboard, fallback output, and gas warning]*
+*   **Market Explorer** — *[Placeholder: Paginated active market list and details]*
+*   **Alerts** — *[Placeholder: Active price alert configuration and notifications]*
+*   **Discover** — *[Placeholder: Dominant tokens and newest registry listings]*
+
+---
+
+## Deployment & Setup
 
 ### Prerequisites
+*   Node.js (v20.6.0+ recommended for native `.env` file support)
+*   NPM
 
-- Node.js (version 20.6.0 or higher is recommended for native `.env` loading)
-- NPM
-
-### 1. Installation
-
-Clone your repository, navigate to the folder, and install the standalone dependencies:
-
-```bash
-cd sera-scout-bot
-npm install
-```
-
-### 2. Configure Environment Variables
-
-Create a `.env` file in the root directory:
-
-```env
-BOT_TOKEN=your_telegram_bot_token_here
-API_BASE_URL=https://api.sera.cx/api/v1
-```
-
-### 3. Run the Services
-
-- **Start Telegram Bot** (Starts Grammy bot long-polling):
-  ```bash
-  npm run bot
-  ```
-
-- **Run CLI Quote Test**:
-  ```bash
-  npx tsx src/test-quote.ts
-  ```
+### Setup Instructions
+1.  Clone the repository and install dependencies:
+    ```bash
+    npm install
+    ```
+2.  Compile the TypeScript code:
+    ```bash
+    npm run build
+    ```
+3.  Configure environment variables in a `.env` file:
+    ```env
+    BOT_TOKEN=your_telegram_bot_token
+    API_BASE_URL=https://api.sera.cx/api/v1
+    ```
+4.  Start the Telegram Bot:
+    ```bash
+    npm start
+    ```
 
 ---
 
-## Legacy Features (Sepolia GraphQL Subgraph)
+## Environment Variables
 
-The repository contains historical GraphQL queries and background schedulers designed to run on the Sepolia testnet subgraph. These files are kept for reference under the `src/services/sera.ts`, `src/services/scout.ts`, and `src/services/scheduler.ts` directories. To run them locally:
-
-*   **Run Caching Test Suite**:
-    ```bash
-    npm run alpha
-    ```
-*   **Run Liquidity Test Suite**:
-    ```bash
-    npm run liquidity
-    ```
+| Variable | Description | Default / Required |
+| :--- | :--- | :--- |
+| `BOT_TOKEN` | Telegram Bot API Token obtained from BotFather | **Required** |
+| `API_BASE_URL` | Sera REST API V1 Base URL endpoint | `https://api.sera.cx/api/v1` |
+| `NODE_ENV` | Environment classification (e.g. `test` to bypass polling) | Optional |
