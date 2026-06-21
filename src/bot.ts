@@ -56,13 +56,23 @@ function getMainMenu() {
 function getQuoteMenu() {
   const text = `💸 *Swap Quote*\n\n` +
     `Choose one of the popular trading pairs below, or click *✏️ Custom Pair* to enter a different pair.`;
-  const keyboard = new InlineKeyboard()
-    .text("USDC / USDT", "q_flow:USDC:USDT")
-    .text("EURS / USDT", "q_flow:EURS:USDT").row()
-    .text("MXNT / USDC", "q_flow:MXNT:USDC")
-    .text("BRZ / USDT", "q_flow:BRZ:USDT").row()
-    .text("✏️ Custom Pair", "q_custom_start").row()
-    .text("🏠 Home", "home");
+  const keyboard = new InlineKeyboard();
+  const active = getActiveSymbols();
+  for (let i = 0; i < active.length; i += 2) {
+    const p1 = active[i];
+    const p2 = active[i + 1];
+    if (p1 && p2) {
+      const [b1, q1] = p1.split("/");
+      const [b2, q2] = p2.split("/");
+      keyboard.text(`${b1} / ${q1}`, `q_flow:${b1}:${q1}`)
+              .text(`${b2} / ${q2}`, `q_flow:${b2}:${q2}`).row();
+    } else if (p1) {
+      const [b1, q1] = p1.split("/");
+      keyboard.text(`${b1} / ${q1}`, `q_flow:${b1}:${q1}`).row();
+    }
+  }
+  keyboard.text("✏️ Custom Pair", "q_custom_start").row()
+          .text("🏠 Home", "home");
   return { text, keyboard };
 }
 
@@ -165,11 +175,18 @@ async function getMarketDetails(base: string, quote: string, backPage: number, f
 
   const filterStr = filter || "";
   const backPrefix = isFromActive ? "mkt" : "all_mkt";
-  const keyboard = new InlineKeyboard()
-    .text("💸 Get Quote", `q_flow:${base}:${quote}`)
-    .text("🔔 Set Alert", `al_flow:${base}:${quote}`).row()
-    .text("⬅ Back to List", `${backPrefix}:${backPage}:${filterStr.substring(0, 10)}`)
-    .text("🏠 Home", "home");
+  const keyboard = new InlineKeyboard();
+
+  const activeSymbols = getActiveSymbols();
+  const isActive = market ? activeSymbols.includes(market.symbol) : false;
+
+  if (isActive) {
+    keyboard.text("💸 Get Quote", `q_flow:${base}:${quote}`)
+            .text("🔔 Set Alert", `al_flow:${base}:${quote}`).row();
+  }
+
+  keyboard.text("⬅ Back to List", `${backPrefix}:${backPage}:${filterStr.substring(0, 10)}`)
+          .text("🏠 Home", "home");
 
   return { text, keyboard };
 }
@@ -301,8 +318,10 @@ async function getTrendingPage(page: number) {
 async function getStatsView() {
   const markets = await getCachedMarkets();
   const tokens = await getTokens();
+  const activeSymbols = getActiveSymbols();
 
-  const totalMarkets = markets.length;
+  const totalRegisteredMarkets = markets.length;
+  const totalActiveMarkets = activeSymbols.length;
   const totalTokens = tokens.length;
 
   const lastRefreshTs = getMarketsCacheTimestamp();
@@ -311,21 +330,23 @@ async function getStatsView() {
     : "Just now";
 
   const quoteCounts: Record<string, number> = {};
-  for (const m of markets) {
+  const activeMarkets = markets.filter(m => activeSymbols.includes(m.symbol));
+  for (const m of activeMarkets) {
     quoteCounts[m.quote_symbol] = (quoteCounts[m.quote_symbol] || 0) + 1;
   }
   const usdtCount = quoteCounts["USDT"] || 0;
   const usdcCount = quoteCounts["USDC"] || 0;
-  const eursCount = quoteCounts["EURS"] || 0;
+  const xsgdCount = quoteCounts["XSGD"] || 0;
 
   let text = `📊 *Sera Market Stats*\n\n` +
-    `• Total Active Markets: ${totalMarkets}\n` +
-    `• Total Tokens: ${totalTokens}\n` +
-    `• Last Refresh: ${lastRefreshText}\n\n` +
-    `*Most Common Quote Tokens:*\n\n` +
+    `• *Total Active Markets:* ${totalActiveMarkets}\n` +
+    `• *Total Registered Markets:* ${totalRegisteredMarkets}\n` +
+    `• *Total Registered Tokens:* ${totalTokens}\n` +
+    `• *Last Refresh:* ${lastRefreshText}\n\n` +
+    `*Most Common Quote Tokens (Active Markets):*\n\n` +
     `• USDT: ${usdtCount} markets\n` +
-    `• USDC: ${usdcCount} markets\n` +
-    `• EURS: ${eursCount} markets\n`;
+    `• XSGD: ${xsgdCount} markets\n` +
+    `• USDC: ${usdcCount} markets\n`;
 
   const keyboard = new InlineKeyboard().text("🏠 Home", "home");
 
@@ -568,8 +589,14 @@ bot.command("pair", async (ctx) => {
 
     text += `*Suggested Commands:*\n`;
     if (directMarket) {
-      text += `• \`/quote ${baseSym} ${quoteSym} 100\` - Get instant quote\n` +
-        `• \`/alert ${baseSym} ${quoteSym} above 1.0\` - Setup rate alert\n`;
+      const activeSymbols = getActiveSymbols();
+      const isActive = activeSymbols.includes(directMarket.symbol);
+      if (isActive) {
+        text += `• \`/quote ${baseSym} ${quoteSym} 100\` - Get instant quote\n` +
+          `• \`/alert ${baseSym} ${quoteSym} above 1.0\` - Setup rate alert\n`;
+      } else {
+        text += `• \`/compare ${baseSym} ${quoteSym}\` - Compare both tokens\n`;
+      }
     } else {
       text += `• \`/compare ${baseSym} ${quoteSym}\` - Compare both tokens\n`;
     }
@@ -890,6 +917,14 @@ bot.command("alert", async (ctx) => {
       return;
     }
 
+    const activeSymbols = getActiveSymbols();
+    const pair1 = `${fromToken.symbol}/${toToken.symbol}`;
+    const pair2 = `${toToken.symbol}/${fromToken.symbol}`;
+    if (!activeSymbols.includes(pair1) && !activeSymbols.includes(pair2)) {
+      await ctx.reply(`❌ Cannot set alert: *${fromToken.symbol}/${toToken.symbol}* is not an active market. Alerts can only be configured for active markets with valid liquidity.`, { parse_mode: "Markdown" });
+      return;
+    }
+
     const alert = addAlert({
       telegram_chat_id: ctx.chat.id,
       from_token: fromToken.symbol,
@@ -1149,6 +1184,15 @@ bot.on("callback_query:data", async (ctx) => {
     } else if (action === "al_flow") {
       const from = parts[1];
       const to = parts[2];
+      const activeSymbols = getActiveSymbols();
+      const pair1 = `${from}/${to}`;
+      const pair2 = `${to}/${from}`;
+      if (!activeSymbols.includes(pair1) && !activeSymbols.includes(pair2)) {
+        const text = `❌ Alerts can only be configured for active markets with valid liquidity.`;
+        const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+        await editOrReply(ctx, text, keyboard);
+        return;
+      }
       const { text, keyboard } = getAlertFlow(from, to);
       await editOrReply(ctx, text, keyboard);
     } else if (action === "al_cond") {
@@ -1280,6 +1324,15 @@ bot.on("message:text", async (ctx, next) => {
       if (!fromToken || !toToken) {
         const keyboard = new InlineKeyboard().text("🏠 Home", "home");
         await ctx.reply("❌ Unsupported token pair for alert.", { reply_markup: keyboard });
+        return;
+      }
+
+      const activeSymbols = getActiveSymbols();
+      const pair1 = `${fromToken.symbol}/${toToken.symbol}`;
+      const pair2 = `${toToken.symbol}/${fromToken.symbol}`;
+      if (!activeSymbols.includes(pair1) && !activeSymbols.includes(pair2)) {
+        const keyboard = new InlineKeyboard().text("🏠 Home", "home");
+        await ctx.reply(`❌ Cannot set alert: *${fromToken.symbol}/${toToken.symbol}* is not an active market. Alerts can only be configured for active markets.`, { parse_mode: "Markdown", reply_markup: keyboard });
         return;
       }
 

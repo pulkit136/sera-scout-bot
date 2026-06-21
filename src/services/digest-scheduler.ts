@@ -2,6 +2,7 @@ import { Bot } from "grammy";
 import { getCachedMarkets, getTokens } from "./sera-api.js";
 import { getNewestMarket } from "./discovery-storage.js";
 import { getDigestSubscribedChats, getLastSentDate, setLastSentDate } from "./digest-storage.js";
+import { getActiveSymbols } from "./active-market-storage.js";
 
 let digestInterval: NodeJS.Timeout | null = null;
 
@@ -12,13 +13,16 @@ async function sendDailyDigest(bot: Bot) {
 
     const markets = await getCachedMarkets();
     const tokens = await getTokens();
+    const activeSymbols = getActiveSymbols();
 
     const totalMarkets = markets.length;
+    const activeMarkets = markets.filter(m => activeSymbols.includes(m.symbol));
+    const totalActiveMarkets = activeMarkets.length;
     const totalTokens = tokens.length;
 
     // Calculate token connectivity counts
     const counts: Record<string, { symbol: string; count: number }> = {};
-    for (const m of markets) {
+    for (const m of activeMarkets) {
       counts[m.base_address.toLowerCase()] = counts[m.base_address.toLowerCase()] || { symbol: m.base_symbol, count: 0 };
       counts[m.base_address.toLowerCase()].count++;
 
@@ -35,7 +39,8 @@ async function sendDailyDigest(bot: Bot) {
 
     const digestText = `📰 *Sera Daily Intelligence Digest*\n\n` +
       `📈 *Protocol Overview:*\n` +
-      `• Total Active Markets: *${totalMarkets}*\n` +
+      `• Total Active Markets: *${totalActiveMarkets}*\n` +
+      `• Total Registered Markets: *${totalMarkets}*\n` +
       `• Registered Tokens: *${totalTokens}*\n` +
       `• Most Connected: *${topTokenSymbol}* (active in ${topTokenCount} markets)\n\n` +
       `🆕 *Latest Listed Market:*\n` +
