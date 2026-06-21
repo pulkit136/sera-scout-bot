@@ -94,6 +94,11 @@ export async function getCachedMarkets(bypassCache = false): Promise<ApiMarketIn
   return markets;
 }
 
+export function getMarketsCacheTimestamp(): number | null {
+  if (!marketsCache) return null;
+  return marketsCache.timestamp;
+}
+
 export async function getTokens(): Promise<ApiTokenInfo[]> {
   const data = await requestSeraApi<{ tokens: ApiTokenInfo[] }>("/tokens");
   return data.tokens.map(token => ({

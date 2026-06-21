@@ -1,10 +1,12 @@
 import { Bot } from "grammy";
 import { startAlphaScheduler, getLatestAlphaBoard } from "./services/scheduler.js";
 import { getTopLiquidityMarkets, getMarketScan } from "./services/scout.js";
-import { getTokens, getQuote, getCachedMarkets } from "./services/sera-api.js";
+import { getTokens, getQuote, getCachedMarkets, getMarketsCacheTimestamp } from "./services/sera-api.js";
 import { parseUnits, formatUnits } from "./utils/decimal.js";
 import { addAlert, listAlertsForChat, removeAlert } from "./services/alert-storage.js";
 import { startAlertScheduler } from "./services/alert-scheduler.js";
+import { subscribeChat, unsubscribeChat } from "./services/discovery-storage.js";
+import { startDiscoveryScheduler } from "./services/discovery-scheduler.js";
 
 // Load Bot Token from environment variable
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -36,9 +38,10 @@ Market companion bot for Sera Protocol.
 /alert <from> <to> <above|below> <rate> - Create a quote rate alert
 /myalerts - List your active alerts
 /removealert <id> - Remove an active alert
-/alpha - View tightest spread markets (legacy Sepolia)
-/liquidity - View top liquidity markets (legacy Sepolia)
-/scan <token> - Scan markets for a specific token (legacy Sepolia)
+/watchnewmarkets <on|off> - Subscribe/unsubscribe to new market listings
+/stats - View protocol market and token statistics
+/token <symbol> - Lookup token details and market counts
+/trending - View tokens appearing in the most markets
 /about - Learn more about Sera Scout`;
   await ctx.reply(text, { parse_mode: "Markdown" });
 });
@@ -52,7 +55,8 @@ Telegram companion bot for the Sera Protocol, focused on market discovery, quote
 *Features:*
 
 • *Quote Generation*: Fetch real-time, slippage-protected swap quotes directly from Sera Mainnet.
-• *Market Discovery*: Discover available trading pairs on Sera Mainnet using /markets.
+• *Market Discovery*: Discover available trading pairs on Sera Mainnet using /markets and trending tokens via /trending.
+• *Market Watcher*: Get instant notifications when new pairs are listed via /watchnewmarkets.
 • *Price Alerts*: Get real-time notifications for market movements using /alert.`;
   await ctx.reply(text, { parse_mode: "Markdown" });
 });
@@ -411,6 +415,154 @@ bot.command("removealert", async (ctx) => {
   }
 });
 
+// /watchnewmarkets command
+bot.command("watchnewmarkets", async (ctx) => {
+  try {
+    const mode = ctx.match?.trim().toLowerCase();
+    if (mode !== "on" && mode !== "off") {
+      await ctx.reply("⚠️ Usage: \`/watchnewmarkets <on|off>\`\nExample: \`/watchnewmarkets on\`", { parse_mode: "Markdown" });
+      return;
+    }
+
+    if (mode === "on") {
+      const success = subscribeChat(ctx.chat.id);
+      if (success) {
+        await ctx.reply("🔔 *New Market Watcher Activated*\n\nYou will receive notifications when new trading pairs are listed on Sera Protocol.", { parse_mode: "Markdown" });
+      } else {
+        await ctx.reply("ℹ️ You are already subscribed to new market notifications.", { parse_mode: "Markdown" });
+      }
+    } else {
+      const success = unsubscribeChat(ctx.chat.id);
+      if (success) {
+        await ctx.reply("🔕 *New Market Watcher Deactivated*\n\nYou will no longer receive notifications for new markets.", { parse_mode: "Markdown" });
+      } else {
+        await ctx.reply("ℹ️ You are not subscribed to new market notifications.", { parse_mode: "Markdown" });
+      }
+    }
+  } catch (error) {
+    console.error("Bot /watchnewmarkets error:", error);
+    await ctx.reply("⚠️ Failed to update watcher subscription.");
+  }
+});
+
+// /stats command
+bot.command("stats", async (ctx) => {
+  try {
+    await ctx.replyWithChatAction("typing");
+
+    const markets = await getCachedMarkets();
+    const tokens = await getTokens();
+
+    const totalMarkets = markets.length;
+    const totalTokens = tokens.length;
+
+    // Last refresh time
+    const lastRefreshTs = getMarketsCacheTimestamp();
+    const lastRefreshText = lastRefreshTs 
+      ? new Date(lastRefreshTs).toISOString().replace("T", " ").substring(0, 19) + " UTC"
+      : "Just now";
+
+    // Most common quote tokens count
+    const quoteCounts: Record<string, number> = {};
+    for (const m of markets) {
+      quoteCounts[m.quote_symbol] = (quoteCounts[m.quote_symbol] || 0) + 1;
+    }
+    const usdtCount = quoteCounts["USDT"] || 0;
+    const usdcCount = quoteCounts["USDC"] || 0;
+    const eursCount = quoteCounts["EURS"] || 0;
+
+    let text = `📊 *Sera Market Stats*\n\n`;
+    text += `• Total Markets: ${totalMarkets}\n`;
+    text += `• Total Tokens: ${totalTokens}\n`;
+    text += `• Last Refresh: ${lastRefreshText}\n\n`;
+    text += `*Most Common Quote Tokens:*\n\n`;
+    text += `• USDT: ${usdtCount} markets\n`;
+    text += `• USDC: ${usdcCount} markets\n`;
+    text += `• EURS: ${eursCount} markets\n`;
+
+    await ctx.reply(text, { parse_mode: "Markdown" });
+  } catch (error) {
+    console.error("Bot /stats error:", error);
+    await ctx.reply("⚠️ Failed to load statistics.");
+  }
+});
+
+// /token command
+bot.command("token", async (ctx) => {
+  try {
+    const symbol = ctx.match?.trim();
+    if (!symbol) {
+      await ctx.reply("⚠️ Usage: \`/token <symbol>\`\nExample: \`/token USDC\`", { parse_mode: "Markdown" });
+      return;
+    }
+
+    await ctx.replyWithChatAction("typing");
+
+    const tokens = await getTokens();
+    const token = tokens.find(t => t.symbol.toUpperCase() === symbol.toUpperCase());
+
+    if (!token) {
+      await ctx.reply(`❌ Token "${symbol}" not found in registry.`, { parse_mode: "Markdown" });
+      return;
+    }
+
+    const markets = await getCachedMarkets();
+    const tokenMarkets = markets.filter(m => 
+      m.base_address.toLowerCase() === token.address.toLowerCase() ||
+      m.quote_address.toLowerCase() === token.address.toLowerCase()
+    );
+    const marketCount = tokenMarkets.length;
+
+    let text = `🪙 *Token Information*\n\n`;
+    text += `*Symbol:*\n${token.symbol}\n\n`;
+    text += `*Address:*\n\`${token.address}\`\n\n`;
+    text += `*Decimals:*\n${token.decimals}\n\n`;
+    text += `*Currency:*\n${token.currency}\n\n`;
+    text += `*Minimum Trade:*\n${token.min_trade_amount}\n\n`;
+    text += `*Markets:*\n${marketCount} markets`;
+
+    await ctx.reply(text, { parse_mode: "Markdown" });
+  } catch (error) {
+    console.error("Bot /token error:", error);
+    await ctx.reply("⚠️ Failed to load token information.");
+  }
+});
+
+// /trending command
+bot.command("trending", async (ctx) => {
+  try {
+    await ctx.replyWithChatAction("typing");
+
+    const markets = await getCachedMarkets();
+    const counts: Record<string, { symbol: string; count: number }> = {};
+    for (const m of markets) {
+      if (!counts[m.base_address.toLowerCase()]) {
+        counts[m.base_address.toLowerCase()] = { symbol: m.base_symbol, count: 0 };
+      }
+      counts[m.base_address.toLowerCase()].count++;
+
+      if (!counts[m.quote_address.toLowerCase()]) {
+        counts[m.quote_address.toLowerCase()] = { symbol: m.quote_symbol, count: 0 };
+      }
+      counts[m.quote_address.toLowerCase()].count++;
+    }
+
+    const sorted = Object.values(counts).sort((a, b) => b.count - a.count);
+
+    let text = `🔥 *Most Connected Tokens*\n\n`;
+    const limit = Math.min(sorted.length, 10);
+    for (let i = 0; i < limit; i++) {
+      const entry = sorted[i];
+      text += `${i + 1}. *${entry.symbol}* (${entry.count} markets)\n`;
+    }
+
+    await ctx.reply(text, { parse_mode: "Markdown" });
+  } catch (error) {
+    console.error("Bot /trending error:", error);
+    await ctx.reply("⚠️ Failed to load trending tokens.");
+  }
+});
+
 // Generic catch-all for errors to ensure long polling doesn't crash the bot process
 bot.catch((err) => {
   console.error("Grammy Bot error boundary caught an error:", err);
@@ -436,6 +588,9 @@ async function start() {
   
   // Start Quote Alert Scheduler
   startAlertScheduler(bot);
+
+  // Start Market Discovery Scheduler (30m)
+  startDiscoveryScheduler(bot);
   
   await bot.start();
 }

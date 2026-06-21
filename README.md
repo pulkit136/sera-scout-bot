@@ -21,6 +21,10 @@ Sera Scout is designed to be the ultimate mobile companion for Sera Protocol use
 | `/quote` | Fetch slippage-protected swap quotes | **Live** | Mainnet REST API |
 | `/markets` | List active trading markets and pairs | **Live** | Mainnet REST API |
 | `/alert` | Price alert triggers and notifications | **Live** | Mainnet REST API |
+| `/watchnewmarkets` | Subscribe to new listing notifications | **Live** | Mainnet REST API |
+| `/stats` | View catalog statistics | **Live** | Mainnet REST API |
+| `/token` | Explore token details & market count | **Live** | Mainnet REST API |
+| `/trending` | Rank tokens by market connection | **Live** | Mainnet REST API |
 | `/alpha` | Tightest spread ranking table | *Legacy* | Sepolia Subgraph (GraphQL) |
 | `/liquidity` | Leaderboard of deep liquidity pools | *Legacy* | Sepolia Subgraph (GraphQL) |
 | `/scan` | Market spread and fee metrics lookup | *Legacy* | Sepolia Subgraph (GraphQL) |
@@ -71,6 +75,14 @@ graph TD
 *   `/start` — Greeting portal and command summary menu.
 *   `/about` — Details bot features and architecture.
 *   `/quote <FROM> <TO> <AMOUNT>` — Fetches a live swap quote from mainnet (e.g. `/quote USDC USDT 100`).
+*   `/markets [filter]` — Lists active trading pairs or filters them by token (e.g. `/markets USDC`).
+*   `/alert <FROM> <TO> <above\|below> <rate>` — Configures a price rate trigger alert (e.g. `/alert EURS USDT above 1.08`).
+*   `/myalerts` — Lists active alerts for the chat.
+*   `/removealert <id>` — Removes a specific alert by its ID.
+*   `/watchnewmarkets <on\|off>` — Subscribes or unsubscribes to new market listing notifications.
+*   `/stats` — Displays protocol market and token statistics.
+*   `/token <symbol>` — Queries details and market connections for a specific token (e.g. `/token USDC`).
+*   `/trending` — Displays the most connected tokens based on active market counts.
 *   `/alpha` — Retrieves top 10 tightest spread pairs (*Legacy Sepolia*).
 *   `/liquidity` — Ranks top 10 pairs by total liquidity volumes (*Legacy Sepolia*).
 *   `/scan <TOKEN>` — Displays spot price and fee metrics (*Legacy Sepolia*).
@@ -80,9 +92,10 @@ graph TD
 ## Product Roadmap
 
 *   **Phase 1 (Completed)**: Implement production-grade Mainnet `/quote` command using the official REST API and decimal-safe conversions.
-*   **Phase 2**: Add market discovery features, including active trading pairs listing via `/markets`.
-*   **Phase 3**: Build notification and alerts engine (`/alert`) allowing users to monitor price thresholds.
-*   **Phase 4 (Under Evaluation)**: Build direct account monitoring and trading actions (Balances, Orders, Fills).
+*   **Phase 2 (Completed)**: Add market discovery features, including active trading pairs listing via `/markets`.
+*   **Phase 3 (Completed)**: Build notification and alerts engine (`/alert`) allowing users to monitor price thresholds.
+*   **Phase 4 (Completed)**: Implement advanced market monitoring & statistics (`/watchnewmarkets`, `/stats`, `/token`, `/trending`).
+*   **Phase 5 (Under Evaluation)**: Build direct account monitoring and trading actions (Balances, Orders, Fills, Intent Execution).
 
 ---
 
