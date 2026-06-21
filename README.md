@@ -19,7 +19,7 @@ Sera Scout is designed to be the ultimate mobile companion for Sera Protocol use
 | Feature | Description | Status | API Source |
 | :--- | :--- | :--- | :--- |
 | `/quote` | Fetch slippage-protected swap quotes | **Live** | Mainnet REST API |
-| `/markets` | List active trading markets and pairs | **Planned** | Mainnet REST API |
+| `/markets` | List active trading markets and pairs | **Live** | Mainnet REST API |
 | `/alert` | Price alert triggers and notifications | **Planned** | Mainnet REST API |
 | `/alpha` | Tightest spread ranking table | *Legacy* | Sepolia Subgraph (GraphQL) |
 | `/liquidity` | Leaderboard of deep liquidity pools | *Legacy* | Sepolia Subgraph (GraphQL) |

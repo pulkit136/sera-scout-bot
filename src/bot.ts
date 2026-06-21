@@ -1,7 +1,7 @@
 import { Bot } from "grammy";
 import { startAlphaScheduler, getLatestAlphaBoard } from "./services/scheduler.js";
 import { getTopLiquidityMarkets, getMarketScan } from "./services/scout.js";
-import { getTokens, getQuote } from "./services/sera-api.js";
+import { getTokens, getQuote, getCachedMarkets } from "./services/sera-api.js";
 import { parseUnits, formatUnits } from "./utils/decimal.js";
 
 // Load Bot Token from environment variable
@@ -25,14 +25,15 @@ const ERROR_MESSAGE = "⚠️ Data temporarily unavailable.\nPlease try again sh
 bot.command("start", async (ctx) => {
   const text = `👋 *Welcome to Sera Scout*
 
-Market intelligence bot for Sera Protocol.
+Market companion bot for Sera Protocol.
 
 *Available commands:*
 
-/alpha - View tightest spread markets (cached)
-/liquidity - View top liquidity markets
-/scan <token> - Scan markets for a specific token
 /quote <from> <to> <amount> - Get a swap price quote
+/markets - Discover available Sera trading pairs
+/alpha - View tightest spread markets (legacy Sepolia)
+/liquidity - View top liquidity markets (legacy Sepolia)
+/scan <token> - Scan markets for a specific token (legacy Sepolia)
 /about - Learn more about Sera Scout`;
   await ctx.reply(text, { parse_mode: "Markdown" });
 });
@@ -46,7 +47,7 @@ Telegram companion bot for the Sera Protocol, focused on market discovery, quote
 *Features:*
 
 • *Quote Generation*: Fetch real-time, slippage-protected swap quotes directly from Sera Mainnet.
-• *Market Discovery*: Explore active pools, tokens, and trading pairs (Planned).
+• *Market Discovery*: Discover available trading pairs on Sera Mainnet using /markets.
 • *Price Alerts*: Get real-time notifications for market movements (Planned).`;
   await ctx.reply(text, { parse_mode: "Markdown" });
 });
@@ -228,6 +229,67 @@ bot.command("quote", async (ctx) => {
     console.error("Bot /quote error:", error);
     const msg = error instanceof Error ? error.message : "Unknown error";
     await ctx.reply(`❌ Failed to generate quote: *${msg}*`, { parse_mode: "Markdown" });
+  }
+});
+
+// /markets command
+bot.command("markets", async (ctx) => {
+  try {
+    const filterArg = ctx.match?.trim();
+    await ctx.replyWithChatAction("typing");
+
+    // Fetch markets from in-memory cache (5m TTL)
+    const allMarkets = await getCachedMarkets();
+
+    // Sort alphabetically by symbol
+    const sortedMarkets = [...allMarkets].sort((a, b) => a.symbol.localeCompare(b.symbol));
+
+    if (!filterArg) {
+      // Display first 20 markets
+      const displayLimit = Math.min(sortedMarkets.length, 20);
+      const displayed = sortedMarkets.slice(0, displayLimit);
+
+      let text = `📈 *Sera Markets*\n\n`;
+      for (const m of displayed) {
+        text += `• ${m.base_symbol} / ${m.quote_symbol}\n`;
+      }
+      text += `\nShowing ${displayLimit} of ${sortedMarkets.length} markets\n\n`;
+      text += `Try:\n\`/markets USDC\``;
+
+      await ctx.reply(text, { parse_mode: "Markdown" });
+    } else {
+      const searchStr = filterArg.toUpperCase();
+      const filtered = sortedMarkets.filter(m => 
+        m.symbol.toUpperCase().includes(searchStr) ||
+        m.base_symbol.toUpperCase().includes(searchStr) ||
+        m.quote_symbol.toUpperCase().includes(searchStr)
+      );
+
+      if (filtered.length === 0) {
+        await ctx.reply(`❌ No markets found matching "${filterArg}"\n\nTry:\n\`/markets USDC\``, { parse_mode: "Markdown" });
+        return;
+      }
+
+      const displayLimit = Math.min(filtered.length, 25);
+      const displayed = filtered.slice(0, displayLimit);
+
+      let text = `📈 *Sera Markets*\n\n`;
+      for (const m of displayed) {
+        text += `• ${m.base_symbol} / ${m.quote_symbol}\n`;
+      }
+
+      if (filtered.length > 25) {
+        const remaining = filtered.length - 25;
+        text += `...and ${remaining} more markets.\n`;
+      }
+
+      text += `\nShowing ${displayLimit} of ${filtered.length} matching markets`;
+
+      await ctx.reply(text, { parse_mode: "Markdown" });
+    }
+  } catch (error) {
+    console.error("Bot /markets handler error:", error);
+    await ctx.reply("⚠️ Failed to load markets. Please try again later.");
   }
 });
 

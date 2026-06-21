@@ -76,9 +76,22 @@ function normalizeApiMarket(market: ApiMarketInfo): ApiMarketInfo {
   };
 }
 
+let marketsCache: { data: ApiMarketInfo[]; timestamp: number } | null = null;
+const MARKETS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 export async function getMarkets(): Promise<ApiMarketInfo[]> {
   const data = await requestSeraApi<{ markets: ApiMarketInfo[] }>("/markets");
   return data.markets.map(normalizeApiMarket);
+}
+
+export async function getCachedMarkets(bypassCache = false): Promise<ApiMarketInfo[]> {
+  const now = Date.now();
+  if (!bypassCache && marketsCache && (now - marketsCache.timestamp < MARKETS_CACHE_TTL)) {
+    return marketsCache.data;
+  }
+  const markets = await getMarkets();
+  marketsCache = { data: markets, timestamp: now };
+  return markets;
 }
 
 export async function getTokens(): Promise<ApiTokenInfo[]> {
