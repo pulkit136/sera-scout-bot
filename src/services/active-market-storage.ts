@@ -67,3 +67,17 @@ export function getActiveSymbols(): string[] {
 export function getLastScanTime(): string {
   return activeMarketsData.last_scan_time || "N/A";
 }
+
+export function getLiquidityLevel(symbol: string): "Deep" | "Medium" | "Limited" | "Unknown" {
+  const cleanSymbol = symbol.toUpperCase();
+  if (["USDC/USDT", "XSGD/USDT", "MYRT/USDT"].includes(cleanSymbol)) {
+    return "Deep";
+  }
+  if (["XSGD/USDC", "MYRT/XSGD"].includes(cleanSymbol)) {
+    return "Medium";
+  }
+  if (["EUR0/XSGD"].includes(cleanSymbol)) {
+    return "Limited";
+  }
+  return "Unknown";
+}

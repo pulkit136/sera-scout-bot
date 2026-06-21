@@ -9,7 +9,7 @@ import { subscribeChat, unsubscribeChat, getNewestMarket } from "./services/disc
 import { startDiscoveryScheduler } from "./services/discovery-scheduler.js";
 import { subscribeDigest, unsubscribeDigest } from "./services/digest-storage.js";
 import { startDigestScheduler } from "./services/digest-scheduler.js";
-import { getActiveSymbols, getLastScanTime } from "./services/active-market-storage.js";
+import { getActiveSymbols, getLastScanTime, getLiquidityLevel } from "./services/active-market-storage.js";
 
 // Load Bot Token from environment variable
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -162,6 +162,11 @@ export async function getMarketDetails(base: string, quote: string, backPage: nu
     const activeSymbols = getActiveSymbols();
     const isActive = activeSymbols.includes(market.symbol);
     text += `• *Status:* ${isActive ? "🟢 Active (Liquid)" : "🔴 Inactive (No Liquidity)"}\n`;
+    if (isActive) {
+      const level = getLiquidityLevel(market.symbol);
+      const label = level === "Deep" ? "🟢 Deep" : level === "Medium" ? "🟡 Medium" : "🔴 Limited";
+      text += `• *Liquidity:* ${label} Liquidity\n`;
+    }
     text += `• *Ticker Symbol:* ${market.symbol}\n`;
     text += `• *Base Asset:* ${market.base_symbol} (\`${market.base_address.substring(0, 6)}...${market.base_address.substring(38)}\`)\n`;
     text += `• *Quote Asset:* ${market.quote_symbol} (\`${market.quote_address.substring(0, 6)}...${market.quote_address.substring(38)}\`)\n`;
@@ -192,12 +197,19 @@ export async function getMarketDetails(base: string, quote: string, backPage: nu
 }
 
 export function getQuoteFlow(from: string, to: string) {
-  const text = `💸 *Sera Swap Quote: ${from} ➔ ${to}*\n\n` +
+  const pair = `${from}/${to}`;
+  const level = getLiquidityLevel(pair);
+  const indicator = level === "Deep" ? "🟢 Deep Liquidity" : level === "Medium" ? "🟡 Medium Liquidity" : level === "Limited" ? "🔴 Limited Liquidity" : "";
+
+  const text = `💸 *Sera Swap Quote: ${from} ➔ ${to}*\n` +
+    (indicator ? `• *Liquidity:* ${indicator}\n\n` : `\n`) +
     `Select a predefined swap amount below, or click *✏️ Custom Amount* to specify another value:`;
+
   const keyboard = new InlineKeyboard()
-    .text("100", `q_amt:${from}:${to}:100`)
-    .text("1,000", `q_amt:${from}:${to}:1000`)
-    .text("10,000", `q_amt:${from}:${to}:10000`).row()
+    .text("1", `q_amt:${from}:${to}:1`)
+    .text("10", `q_amt:${from}:${to}:10`)
+    .text("50", `q_amt:${from}:${to}:50`)
+    .text("100", `q_amt:${from}:${to}:100`).row()
     .text("✏️ Custom Amount", `q_custom:${from}:${to}`).row()
     .text("🏠 Home", "home");
   return { text, keyboard };
@@ -413,25 +425,8 @@ export async function getMarketStatusView() {
   return { text, keyboard };
 }
 
-export async function fetchAndFormatQuote(fromSym: string, toSym: string, amountStr: string): Promise<string> {
-  const tokens = await getTokens();
-  const fromToken = tokens.find(t => t.symbol.toUpperCase() === fromSym.toUpperCase());
-  const toToken = tokens.find(t => t.symbol.toUpperCase() === toSym.toUpperCase());
-
-  if (!fromToken) {
-    throw new Error(`Unsupported source token symbol: *${fromSym}*`);
-  }
-  if (!toToken) {
-    throw new Error(`Unsupported destination token symbol: *${toSym}*`);
-  }
-
-  let atomicAmount: string;
-  try {
-    atomicAmount = parseUnits(amountStr, fromToken.decimals);
-  } catch (e) {
-    throw new Error(`Invalid amount *${amountStr}*. Please specify a valid number.`);
-  }
-
+async function fetchQuoteRaw(fromToken: any, toToken: any, amountStr: string): Promise<{ receiveAmount: string; atomicAmount: string; quote: any }> {
+  const atomicAmount = parseUnits(amountStr, fromToken.decimals);
   const quote = await getQuote({
     from_token: fromToken.address,
     to_token: toToken.address,
@@ -444,7 +439,10 @@ export async function fetchAndFormatQuote(fromSym: string, toSym: string, amount
 
   const minReceive = quote.route_params.minOutputAmount;
   const receiveAmount = formatUnits(minReceive, toToken.decimals);
+  return { receiveAmount, atomicAmount, quote };
+}
 
+function formatQuoteText(amountStr: string, fromToken: any, toToken: any, receiveAmount: string, atomicAmount: string, quote: any): string {
   let text = `💸 *Sera Swap Quote*\n\n`;
   text += `• Input: ${amountStr} ${fromToken.symbol}\n`;
 
@@ -477,6 +475,59 @@ export async function fetchAndFormatQuote(fromSym: string, toSym: string, amount
 
   text += `ℹ️ Minimum receive includes slippage protection.`;
   return text;
+}
+
+export async function fetchAndFormatQuote(fromSym: string, toSym: string, amountStr: string): Promise<{ text: string; actualAmount: string; isFallback: boolean }> {
+  const tokens = await getTokens();
+  const fromToken = tokens.find(t => t.symbol.toUpperCase() === fromSym.toUpperCase());
+  const toToken = tokens.find(t => t.symbol.toUpperCase() === toSym.toUpperCase());
+
+  if (!fromToken) {
+    throw new Error(`Unsupported source token symbol: *${fromSym}*`);
+  }
+  if (!toToken) {
+    throw new Error(`Unsupported destination token symbol: *${toSym}*`);
+  }
+
+  let requestedAmt = Number(amountStr);
+  if (isNaN(requestedAmt) || requestedAmt <= 0) {
+    throw new Error(`Invalid amount *${amountStr}*. Please specify a valid number.`);
+  }
+
+  try {
+    const { receiveAmount, atomicAmount, quote } = await fetchQuoteRaw(fromToken, toToken, amountStr);
+    const text = formatQuoteText(amountStr, fromToken, toToken, receiveAmount, atomicAmount, quote);
+    return { text, actualAmount: amountStr, isFallback: false };
+  } catch (error: any) {
+    const isNoLiquidity = error.message && error.message.includes("no_liquidity");
+    if (!isNoLiquidity) {
+      throw error;
+    }
+
+    // Try fallback sequence
+    const retries = [100, 50, 10, 1].filter(x => x < requestedAmt);
+    for (const retryAmt of retries) {
+      try {
+        const { receiveAmount, atomicAmount, quote } = await fetchQuoteRaw(fromToken, toToken, String(retryAmt));
+        
+        let text = `⚠️ *The requested amount exceeds current liquidity.*\n\n` +
+          `A smaller quote is available:\n` +
+          `• *${retryAmt} ${fromToken.symbol} ➔ ${receiveAmount} ${toToken.symbol}*\n\n` +
+          `_This market currently supports smaller trade sizes._\n\n` +
+          `Try a smaller amount or use Custom.`;
+          
+        return { text, actualAmount: String(retryAmt), isFallback: true };
+      } catch (retryErr) {
+        // Continue retrying smaller amounts
+      }
+    }
+
+    // Friendly error message for no_liquidity if all retries fail
+    const friendlyError = `⚠️ *This trade size exceeds currently available liquidity for this market.*\n\n` +
+      `Sera protects users from excessive slippage by rejecting quotes that cannot be executed safely.\n\n` +
+      `Try a smaller amount or use the Custom option.`;
+    throw new Error(friendlyError);
+  }
 }
 
 async function editOrReply(ctx: any, text: string, keyboard: InlineKeyboard) {
@@ -564,6 +615,11 @@ bot.command("pair", async (ctx) => {
       const activeSymbols = getActiveSymbols();
       const isActive = activeSymbols.includes(directMarket.symbol);
       text += `• *Status:* ${isActive ? "🟢 Active (Liquid)" : "🔴 Inactive (No Liquidity)"}\n`;
+      if (isActive) {
+        const level = getLiquidityLevel(directMarket.symbol);
+        const label = level === "Deep" ? "🟢 Deep" : level === "Medium" ? "🟡 Medium" : "🔴 Limited";
+        text += `• *Liquidity:* ${label} Liquidity\n`;
+      }
       text += `• *Ticker:* ${directMarket.symbol}\n`;
       text += `• *Base Decimals:* ${directMarket.base_decimals}\n`;
       text += `• *Quote Decimals:* ${directMarket.quote_decimals}\n`;
@@ -866,17 +922,17 @@ bot.command("quote", async (ctx) => {
     const [fromSym, toSym, amountStr] = args;
     await ctx.replyWithChatAction("typing").catch(() => {});
 
-    const text = await fetchAndFormatQuote(fromSym, toSym, amountStr);
+    const result = await fetchAndFormatQuote(fromSym, toSym, amountStr);
     const keyboard = new InlineKeyboard()
-      .text("🔄 Refresh", `q_amt:${fromSym.toUpperCase()}:${toSym.toUpperCase()}:${amountStr}`)
+      .text("🔄 Refresh", `q_amt:${fromSym.toUpperCase()}:${toSym.toUpperCase()}:${result.actualAmount}`)
       .text("🔔 Set Alert", `al_flow:${fromSym.toUpperCase()}:${toSym.toUpperCase()}`).row()
       .text("🏠 Home", "home");
 
-    await ctx.reply(text, { parse_mode: "Markdown", reply_markup: keyboard });
+    await ctx.reply(result.text, { parse_mode: "Markdown", reply_markup: keyboard });
   } catch (error) {
     console.error("Bot /quote error:", error);
     const msg = error instanceof Error ? error.message : "Unknown error";
-    await ctx.reply(`❌ Failed to generate quote: *${msg}*`, { parse_mode: "Markdown" });
+    await ctx.reply(msg.startsWith("⚠️") ? msg : `❌ Failed to generate quote: *${msg}*`, { parse_mode: "Markdown" });
   }
 });
 
@@ -1169,15 +1225,15 @@ bot.on("callback_query:data", async (ctx) => {
       await ctx.replyWithChatAction("typing").catch(() => {});
       
       try {
-        const text = await fetchAndFormatQuote(from, to, amount);
+        const result = await fetchAndFormatQuote(from, to, amount);
         const keyboard = new InlineKeyboard()
-          .text("🔄 Refresh", `q_amt:${from}:${to}:${amount}`)
+          .text("🔄 Refresh", `q_amt:${from}:${to}:${result.actualAmount}`)
           .text("🔔 Set Alert", `al_flow:${from}:${to}`).row()
           .text("🏠 Home", "home");
-        await editOrReply(ctx, text, keyboard);
+        await editOrReply(ctx, result.text, keyboard);
       } catch (err: any) {
         const msg = err.message || "Unknown error";
-        const text = `❌ Failed to generate quote: *${msg}*`;
+        const text = msg.startsWith("⚠️") ? msg : `❌ Failed to generate quote: *${msg}*`;
         const keyboard = new InlineKeyboard().text("🏠 Home", "home");
         await editOrReply(ctx, text, keyboard);
       }
@@ -1291,16 +1347,16 @@ bot.on("message:text", async (ctx, next) => {
     await ctx.replyWithChatAction("typing").catch(() => {});
 
     try {
-      const quoteText = await fetchAndFormatQuote(from, to, text);
+      const result = await fetchAndFormatQuote(from, to, text);
       const keyboard = new InlineKeyboard()
-        .text("🔄 Refresh", `q_amt:${from}:${to}:${text}`)
+        .text("🔄 Refresh", `q_amt:${from}:${to}:${result.actualAmount}`)
         .text("🔔 Set Alert", `al_flow:${from}:${to}`).row()
         .text("🏠 Home", "home");
-      await ctx.reply(quoteText, { parse_mode: "Markdown", reply_markup: keyboard });
+      await ctx.reply(result.text, { parse_mode: "Markdown", reply_markup: keyboard });
     } catch (err: any) {
       const msg = err.message || "Unknown error";
       const keyboard = new InlineKeyboard().text("🏠 Home", "home");
-      await ctx.reply(`❌ Failed to generate quote: *${msg}*`, { parse_mode: "Markdown", reply_markup: keyboard });
+      await ctx.reply(msg.startsWith("⚠️") ? msg : `❌ Failed to generate quote: *${msg}*`, { parse_mode: "Markdown", reply_markup: keyboard });
     }
 
   } else if (session.state === "awaiting_alert_rate") {
