@@ -206,10 +206,10 @@ export function getQuoteFlow(from: string, to: string) {
     `Select a predefined swap amount below, or click *✏️ Custom Amount* to specify another value:`;
 
   const keyboard = new InlineKeyboard()
-    .text("1", `q_amt:${from}:${to}:1`)
     .text("10", `q_amt:${from}:${to}:10`)
     .text("50", `q_amt:${from}:${to}:50`)
-    .text("100", `q_amt:${from}:${to}:100`).row()
+    .text("100", `q_amt:${from}:${to}:100`)
+    .text("500", `q_amt:${from}:${to}:500`).row()
     .text("✏️ Custom Amount", `q_custom:${from}:${to}`).row()
     .text("🏠 Home", "home");
   return { text, keyboard };
@@ -444,6 +444,22 @@ async function fetchQuoteRaw(fromToken: any, toToken: any, amountStr: string): P
 
 function formatQuoteText(amountStr: string, fromToken: any, toToken: any, receiveAmount: string, atomicAmount: string, quote: any): string {
   let text = `💸 *Sera Swap Quote*\n\n`;
+
+  let isSmallTrade = false;
+  if (quote.fee_breakdown && quote.fee_breakdown.gas_cost_from_token) {
+    try {
+      const gasCost = Number(quote.fee_breakdown.gas_cost_from_token);
+      const tradeValue = Number(amountStr);
+      if (!isNaN(gasCost) && !isNaN(tradeValue) && tradeValue > 0 && gasCost >= 0.1 * tradeValue) {
+        isSmallTrade = true;
+      }
+    } catch {}
+  }
+
+  if (isSmallTrade) {
+    text += `⚠️ _Gas cost is a significant portion of this trade. Consider using a larger amount for a more representative quote._\n\n`;
+  }
+
   text += `• Input: ${amountStr} ${fromToken.symbol}\n`;
 
   if (quote.fee_breakdown && quote.fee_breakdown.gas_cost_from_token) {
@@ -505,15 +521,14 @@ export async function fetchAndFormatQuote(fromSym: string, toSym: string, amount
     }
 
     // Try fallback sequence
-    const retries = [100, 50, 10, 1].filter(x => x < requestedAmt);
+    const retries = [500, 100, 50, 10].filter(x => x < requestedAmt);
     for (const retryAmt of retries) {
       try {
-        const { receiveAmount, atomicAmount, quote } = await fetchQuoteRaw(fromToken, toToken, String(retryAmt));
+        await fetchQuoteRaw(fromToken, toToken, String(retryAmt));
         
         let text = `⚠️ *The requested amount exceeds current liquidity.*\n\n` +
-          `A smaller quote is available:\n` +
-          `• *${retryAmt} ${fromToken.symbol} ➔ ${receiveAmount} ${toToken.symbol}*\n\n` +
-          `_This market currently supports smaller trade sizes._\n\n` +
+          `A quote is available for smaller sizes:\n` +
+          `*${retryAmt} ${fromToken.symbol} ➔ ${toToken.symbol}*\n\n` +
           `Try a smaller amount or use Custom.`;
           
         return { text, actualAmount: String(retryAmt), isFallback: true };
