@@ -10,7 +10,6 @@ import { startDiscoveryScheduler } from "./services/discovery-scheduler.js";
 import { subscribeDigest, unsubscribeDigest } from "./services/digest-storage.js";
 import { startDigestScheduler } from "./services/digest-scheduler.js";
 import { getActiveSymbols, getLastScanTime } from "./services/active-market-storage.js";
-import { startActiveMarketScheduler } from "./services/active-market-scheduler.js";
 
 // Load Bot Token from environment variable
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -247,8 +246,10 @@ function getAlertsPage(chatId: number, page: number) {
 
 async function getTrendingPage(page: number) {
   const markets = await getCachedMarkets();
+  const activeSymbols = getActiveSymbols();
+  const activeMarkets = markets.filter(m => activeSymbols.includes(m.symbol));
   const counts: Record<string, { symbol: string; count: number }> = {};
-  for (const m of markets) {
+  for (const m of activeMarkets) {
     if (!counts[m.base_address.toLowerCase()]) {
       counts[m.base_address.toLowerCase()] = { symbol: m.base_symbol, count: 0 };
     }
@@ -333,10 +334,12 @@ async function getStatsView() {
 
 async function getDiscoverView() {
   const markets = await getCachedMarkets();
-  const totalMarkets = markets.length;
+  const activeSymbols = getActiveSymbols();
+  const activeMarkets = markets.filter(m => activeSymbols.includes(m.symbol));
+  const totalMarkets = activeMarkets.length;
 
   const counts: Record<string, { symbol: string; count: number }> = {};
-  for (const m of markets) {
+  for (const m of activeMarkets) {
     counts[m.base_address.toLowerCase()] = counts[m.base_address.toLowerCase()] || { symbol: m.base_symbol, count: 0 };
     counts[m.base_address.toLowerCase()].count++;
 
@@ -380,7 +383,7 @@ async function getMarketStatusView() {
     `• *Active Markets (with liquidity):* *${active}*\n` +
     `• *Inactive Markets (no liquidity):* *${inactive}*\n` +
     `• *Last Active Scan:* ${lastScanText}\n\n` +
-    `💡 _Active markets are scanned hourly by checking quote execution validity._`;
+    `💡 _Active markets are loaded from the curated registry (\`data/active_markets.json\`)._`;
 
   const keyboard = new InlineKeyboard()
     .text("📈 Browse Active", "mkt:1")
@@ -1340,8 +1343,7 @@ async function start() {
   // Start Daily Digest Scheduler (hourly check)
   startDigestScheduler(bot);
   
-  // Start Active Market Liquidity Scheduler (60m)
-  startActiveMarketScheduler(bot);
+  // Background scanning scheduler is removed to prevent rate limits and ensure stability
   
   await bot.start();
 }

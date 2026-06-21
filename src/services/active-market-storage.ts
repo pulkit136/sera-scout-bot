@@ -33,7 +33,6 @@ function initStorage() {
     if (fs.existsSync(STORAGE_PATH)) {
       const raw = fs.readFileSync(STORAGE_PATH, "utf-8");
       activeMarketsData = JSON.parse(raw);
-      // Ensure active_symbols is present and non-empty, otherwise default it
       if (!activeMarketsData.active_symbols || activeMarketsData.active_symbols.length === 0) {
         activeMarketsData.active_symbols = [...DEFAULT_ACTIVE_SYMBOLS];
       }
@@ -59,19 +58,12 @@ function saveStorage() {
 initStorage();
 
 export function getActiveSymbols(): string[] {
-  // If cache is empty or unavailable, return fallback active markets directly
   if (!activeMarketsData.active_symbols || activeMarketsData.active_symbols.length === 0) {
     return [...DEFAULT_ACTIVE_SYMBOLS];
   }
   return [...activeMarketsData.active_symbols];
 }
 
-export function setActiveSymbols(symbols: string[]): void {
-  activeMarketsData.active_symbols = [...symbols];
-  activeMarketsData.last_scan_time = new Date().toISOString();
-  saveStorage();
-}
-
 export function getLastScanTime(): string {
-  return activeMarketsData.last_scan_time;
+  return activeMarketsData.last_scan_time || "N/A";
 }

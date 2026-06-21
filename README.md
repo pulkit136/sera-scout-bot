@@ -83,7 +83,7 @@ graph TD
 *   `/quote <FROM> <TO> <AMOUNT>` — Fetches a live swap quote from mainnet (e.g. `/quote USDC USDT 100`).
 *   `/markets [filter]` — Lists active trading pairs with liquidity or filters them.
 *   `/allmarkets [filter]` — Lists all registered trading pairs in the static registry.
-*   `/marketstatus` — Displays statistics on active vs inactive markets and the last scan timestamp.
+*   `/marketstatus` — Displays statistics on active vs inactive markets loaded from the curated registry.
 *   `/alert <FROM> <TO> <above\|below> <rate>` — Configures a price rate trigger alert (e.g. `/alert EURS USDT above 1.08`).
 *   `/myalerts` — Lists active alerts for the chat.
 *   `/removealert <id>` — Removes a specific alert by its ID.
@@ -108,7 +108,7 @@ graph TD
 *   **Phase 3 (Completed)**: Build notification and alerts engine (`/alert`) allowing users to monitor price thresholds.
 *   **Phase 4 (Completed)**: Implement advanced market monitoring & statistics (`/watchnewmarkets`, `/stats`, `/token`, `/trending`).
 *   **Phase 5 (Completed)**: Implement Sera Intelligence Layer (`/discover`, `/pair`, `/compare`, `/digest` schedulers).
-*   **Phase 6 (Completed)**: Implement Active Market Intelligence (`/allmarkets`, `/marketstatus`, active market cache scheduler).
+*   **Phase 6 (Completed)**: Implement Active Market Intelligence (`/allmarkets`, `/marketstatus`, curated active market registry).
 *   **Phase 7 (Under Evaluation)**: Build direct account monitoring and trading actions (Balances, Orders, Fills, Intent Execution).
 
 ---
@@ -140,7 +140,7 @@ API_BASE_URL=https://api.sera.cx/api/v1
 
 ### 3. Run the Services
 
-- **Start Telegram Bot** (Starts Grammy bot long-polling along with the legacy background scheduler):
+- **Start Telegram Bot** (Starts Grammy bot long-polling):
   ```bash
   npm run bot
   ```
