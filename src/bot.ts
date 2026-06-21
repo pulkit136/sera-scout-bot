@@ -39,7 +39,7 @@ const userSessions = new Map<number, UserSession>();
 // Interactive Keyboard & Screen Generators
 // ==========================================
 
-function getMainMenu() {
+export function getMainMenu() {
   const text = `👋 *Welcome to Sera Scout*\n\n` +
     `Sera Scout is your interactive companion for the Sera Protocol.\n` +
     `Use the menu below to navigate markets, price discovery, compare tokens, and configure alerts.`;
@@ -53,7 +53,7 @@ function getMainMenu() {
   return { text, keyboard };
 }
 
-function getQuoteMenu() {
+export function getQuoteMenu() {
   const text = `💸 *Swap Quote*\n\n` +
     `Choose one of the popular trading pairs below, or click *✏️ Custom Pair* to enter a different pair.`;
   const keyboard = new InlineKeyboard();
@@ -76,7 +76,7 @@ function getQuoteMenu() {
   return { text, keyboard };
 }
 
-async function getMarketsPage(page: number, filter?: string, onlyActive = false) {
+export async function getMarketsPage(page: number, filter?: string, onlyActive = false) {
   const allMarkets = await getCachedMarkets();
   let sortedMarkets = [...allMarkets].sort((a, b) => a.symbol.localeCompare(b.symbol));
 
@@ -150,7 +150,7 @@ async function getMarketsPage(page: number, filter?: string, onlyActive = false)
   return { text, keyboard };
 }
 
-async function getMarketDetails(base: string, quote: string, backPage: number, filter?: string, isFromActive = true) {
+export async function getMarketDetails(base: string, quote: string, backPage: number, filter?: string, isFromActive = true) {
   const allMarkets = await getCachedMarkets();
   const market = allMarkets.find(m => 
     m.base_symbol.toUpperCase() === base.toUpperCase() && 
@@ -191,7 +191,7 @@ async function getMarketDetails(base: string, quote: string, backPage: number, f
   return { text, keyboard };
 }
 
-function getQuoteFlow(from: string, to: string) {
+export function getQuoteFlow(from: string, to: string) {
   const text = `💸 *Sera Swap Quote: ${from} ➔ ${to}*\n\n` +
     `Select a predefined swap amount below, or click *✏️ Custom Amount* to specify another value:`;
   const keyboard = new InlineKeyboard()
@@ -203,7 +203,7 @@ function getQuoteFlow(from: string, to: string) {
   return { text, keyboard };
 }
 
-function getAlertFlow(from: string, to: string) {
+export function getAlertFlow(from: string, to: string) {
   const text = `🔔 *Create Alert for ${from} ➔ ${to}*\n\n` +
     `Choose when you want to be notified:`;
   const keyboard = new InlineKeyboard()
@@ -213,7 +213,7 @@ function getAlertFlow(from: string, to: string) {
   return { text, keyboard };
 }
 
-function getAlertsPage(chatId: number, page: number) {
+export function getAlertsPage(chatId: number, page: number) {
   const alerts = listAlertsForChat(chatId);
   const pageSize = 5;
   const totalAlerts = alerts.length;
@@ -261,7 +261,7 @@ function getAlertsPage(chatId: number, page: number) {
   return { text, keyboard };
 }
 
-async function getTrendingPage(page: number) {
+export async function getTrendingPage(page: number) {
   const markets = await getCachedMarkets();
   const activeSymbols = getActiveSymbols();
   const activeMarkets = markets.filter(m => activeSymbols.includes(m.symbol));
@@ -315,7 +315,7 @@ async function getTrendingPage(page: number) {
   return { text, keyboard };
 }
 
-async function getStatsView() {
+export async function getStatsView() {
   const markets = await getCachedMarkets();
   const tokens = await getTokens();
   const activeSymbols = getActiveSymbols();
@@ -353,7 +353,7 @@ async function getStatsView() {
   return { text, keyboard };
 }
 
-async function getDiscoverView() {
+export async function getDiscoverView() {
   const markets = await getCachedMarkets();
   const activeSymbols = getActiveSymbols();
   const activeMarkets = markets.filter(m => activeSymbols.includes(m.symbol));
@@ -386,7 +386,7 @@ async function getDiscoverView() {
   return { text, keyboard };
 }
 
-async function getMarketStatusView() {
+export async function getMarketStatusView() {
   const allMarkets = await getCachedMarkets();
   const activeSymbols = getActiveSymbols();
   const lastScan = getLastScanTime();
@@ -413,7 +413,7 @@ async function getMarketStatusView() {
   return { text, keyboard };
 }
 
-async function fetchAndFormatQuote(fromSym: string, toSym: string, amountStr: string): Promise<string> {
+export async function fetchAndFormatQuote(fromSym: string, toSym: string, amountStr: string): Promise<string> {
   const tokens = await getTokens();
   const fromToken = tokens.find(t => t.symbol.toUpperCase() === fromSym.toUpperCase());
   const toToken = tokens.find(t => t.symbol.toUpperCase() === toSym.toUpperCase());
@@ -1401,7 +1401,9 @@ async function start() {
   await bot.start();
 }
 
-start().catch((err) => {
-  console.error("Failed to start Telegram Bot server:", err);
-  process.exit(1);
-});
+if (process.env.NODE_ENV !== "test") {
+  start().catch((err) => {
+    console.error("Failed to start Telegram Bot server:", err);
+    process.exit(1);
+  });
+}
